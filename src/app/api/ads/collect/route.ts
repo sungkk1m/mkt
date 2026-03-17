@@ -3,6 +3,7 @@ import { collectMultiple } from "@/lib/collector";
 import { db } from "@/lib/db";
 import { adCreatives, advertisers } from "@/lib/db/schema";
 import { like, sql } from "drizzle-orm";
+import { DEFAULT_SEARCH_TERMS, DEFAULT_GAME_TERMS } from "@/lib/constants";
 
 async function cleanSeedData(): Promise<number> {
   // Delete seed ads (externalId starts with 'seed_')
@@ -23,6 +24,24 @@ async function cleanSeedData(): Promise<number> {
   return seedAds.length;
 }
 
+function resolveSearchTerms(body: {
+  searchTerms?: string[];
+  useDefaultTerms?: "companies" | "games" | "all";
+}): string[] {
+  // useDefaultTerms: load keywords from server-side constants (avoids encoding issues)
+  if (body.useDefaultTerms) {
+    switch (body.useDefaultTerms) {
+      case "companies":
+        return DEFAULT_SEARCH_TERMS;
+      case "games":
+        return DEFAULT_GAME_TERMS;
+      case "all":
+        return [...DEFAULT_SEARCH_TERMS, ...DEFAULT_GAME_TERMS];
+    }
+  }
+  return body.searchTerms || [];
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Auth check
@@ -35,14 +54,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { searchTerms, country = "KR", cleanSeed = false } = body;
+    const { country = "KR", cleanSeed = false } = body;
 
     let seedCleaned = 0;
     if (cleanSeed) {
       seedCleaned = await cleanSeedData();
     }
 
-    if (!searchTerms || !Array.isArray(searchTerms) || searchTerms.length === 0) {
+    const searchTerms = resolveSearchTerms(body);
+
+    if (searchTerms.length === 0) {
       if (cleanSeed) {
         return NextResponse.json({
           seedCleaned,
@@ -50,7 +71,7 @@ export async function POST(request: NextRequest) {
         });
       }
       return NextResponse.json(
-        { error: "searchTerms 배열이 필요합니다" },
+        { error: "searchTerms 배열 또는 useDefaultTerms ('companies' | 'games' | 'all') 가 필요합니다" },
         { status: 400 }
       );
     }
@@ -60,6 +81,7 @@ export async function POST(request: NextRequest) {
     const summary = {
       seedCleaned,
       totalKeywords: searchTerms.length,
+      keywords: searchTerms,
       totalAdsFound: results.reduce((sum, r) => sum + (r.result?.total || 0), 0),
       totalNew: results.reduce((sum, r) => sum + (r.result?.new || 0), 0),
       totalUpdated: results.reduce(

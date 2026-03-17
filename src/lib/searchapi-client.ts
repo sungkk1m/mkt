@@ -105,17 +105,57 @@ function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
 }
 
 export async function searchPages(
-  keyword: string
+  keyword: string,
+  country: string = "KR"
 ): Promise<SearchApiPageResult[]> {
   const apiKey = getApiKey();
   const data = await requestWithRetry<SearchApiPageSearchResponse>(BASE_URL, {
     engine: "meta_ad_library",
     search_type: "page",
     q: keyword,
-    country: "KR",
+    country,
     api_key: apiKey,
   });
   return data.page_results || [];
+}
+
+export async function searchAdsByKeyword(
+  keyword: string,
+  country: string = "KR"
+): Promise<NormalizedAd[]> {
+  const apiKey = getApiKey();
+  const allAds: NormalizedAd[] = [];
+  let nextPageToken: string | undefined;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params: Record<string, string> = {
+      engine: "meta_ad_library",
+      search_type: "keyword_unordered",
+      q: keyword,
+      country,
+      ad_type: "all",
+      api_key: apiKey,
+    };
+
+    if (nextPageToken) {
+      params.next_page_token = nextPageToken;
+    }
+
+    const data = await requestWithRetry<SearchApiAdSearchResponse>(
+      BASE_URL,
+      params
+    );
+    const ads = data.ad_results || data.ads || [];
+    const normalized = ads.map((ad) => normalizeAd(ad, country));
+    allAds.push(...normalized);
+
+    nextPageToken =
+      data.next_page_token ||
+      data.serpapi_pagination?.next_page_token;
+    if (!nextPageToken) break;
+  }
+
+  return allAds;
 }
 
 export async function getAdsByPageId(
@@ -162,27 +202,62 @@ export async function getAdsByPageId(
   return allAds;
 }
 
+export interface SearchAndCollectResult {
+  pageName: string;
+  pageId: string;
+  ads: NormalizedAd[];
+  method: "page_search" | "keyword_search";
+}
+
 export async function searchAndCollect(
   keyword: string,
   country: string = "KR"
-): Promise<{ pageName: string; pageId: string; ads: NormalizedAd[] }[]> {
-  const pages = await searchPages(keyword);
-  if (pages.length === 0) {
-    return [];
+): Promise<SearchAndCollectResult[]> {
+  const results: SearchAndCollectResult[] = [];
+
+  // Strategy 1: Search for advertiser pages
+  const pages = await searchPages(keyword, country);
+
+  if (pages.length > 0) {
+    // Process top 3 pages instead of just 1
+    const topPages = pages.slice(0, 3);
+
+    for (const page of topPages) {
+      const ads = await getAdsByPageId(page.page_id, { country });
+      if (ads.length > 0) {
+        results.push({
+          pageName: page.page_name,
+          pageId: page.page_id,
+          ads,
+          method: "page_search",
+        });
+      }
+    }
   }
 
-  // Take the most relevant page (first result)
-  const topPages = pages.slice(0, 1);
-  const results: { pageName: string; pageId: string; ads: NormalizedAd[] }[] =
-    [];
+  // Strategy 2: If page search yielded no ads, search ads by keyword directly
+  if (results.length === 0 || results.every((r) => r.ads.length === 0)) {
+    const keywordAds = await searchAdsByKeyword(keyword, country);
+    if (keywordAds.length > 0) {
+      // Group by page
+      const pageMap = new Map<string, NormalizedAd[]>();
+      for (const ad of keywordAds) {
+        const key = ad.pageId || "unknown";
+        if (!pageMap.has(key)) {
+          pageMap.set(key, []);
+        }
+        pageMap.get(key)!.push(ad);
+      }
 
-  for (const page of topPages) {
-    const ads = await getAdsByPageId(page.page_id, { country });
-    results.push({
-      pageName: page.page_name,
-      pageId: page.page_id,
-      ads,
-    });
+      for (const [pageId, ads] of pageMap) {
+        results.push({
+          pageName: ads[0].pageName || keyword,
+          pageId,
+          ads,
+          method: "keyword_search",
+        });
+      }
+    }
   }
 
   return results;
