@@ -8,9 +8,12 @@ import type {
 } from "@/types/searchapi";
 
 const BASE_URL = "https://www.searchapi.io/api/v1/search";
-const MAX_PAGES = 3;
+// Limit pagination to 1 round to conserve API credits
+const MAX_PAGINATION = 1;
 const RETRY_DELAY = 5000;
 const MAX_RETRIES = 2;
+// Delay between API calls to avoid rate limits
+const INTER_CALL_DELAY = 1000;
 
 function getApiKey(): string {
   const key = process.env.SEARCHAPI_KEY;
@@ -43,6 +46,10 @@ async function requestWithRetry<T>(
     }
     throw error;
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
@@ -127,7 +134,7 @@ export async function searchAdsByKeyword(
   const allAds: NormalizedAd[] = [];
   let nextPageToken: string | undefined;
 
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page < MAX_PAGINATION; page++) {
     const params: Record<string, string> = {
       engine: "meta_ad_library",
       search_type: "keyword_unordered",
@@ -167,7 +174,7 @@ export async function getAdsByPageId(
   const allAds: NormalizedAd[] = [];
   let nextPageToken: string | undefined;
 
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page < MAX_PAGINATION; page++) {
     const params: Record<string, string> = {
       engine: "meta_ad_library",
       search_type: "keyword_unordered",
@@ -219,24 +226,23 @@ export async function searchAndCollect(
   const pages = await searchPages(keyword, country);
 
   if (pages.length > 0) {
-    // Process top 3 pages instead of just 1
-    const topPages = pages.slice(0, 3);
-
-    for (const page of topPages) {
-      const ads = await getAdsByPageId(page.page_id, { country });
-      if (ads.length > 0) {
-        results.push({
-          pageName: page.page_name,
-          pageId: page.page_id,
-          ads,
-          method: "page_search",
-        });
-      }
+    // Process top 1 page to conserve API credits (first result is most relevant)
+    const topPage = pages[0];
+    await delay(INTER_CALL_DELAY);
+    const ads = await getAdsByPageId(topPage.page_id, { country });
+    if (ads.length > 0) {
+      results.push({
+        pageName: topPage.page_name,
+        pageId: topPage.page_id,
+        ads,
+        method: "page_search",
+      });
     }
   }
 
   // Strategy 2: If page search yielded no ads, search ads by keyword directly
-  if (results.length === 0 || results.every((r) => r.ads.length === 0)) {
+  if (results.length === 0) {
+    await delay(INTER_CALL_DELAY);
     const keywordAds = await searchAdsByKeyword(keyword, country);
     if (keywordAds.length > 0) {
       // Group by page

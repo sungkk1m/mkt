@@ -5,6 +5,9 @@ import { adCreatives, advertisers } from "@/lib/db/schema";
 import { like, sql } from "drizzle-orm";
 import { DEFAULT_SEARCH_TERMS, DEFAULT_GAME_TERMS } from "@/lib/constants";
 
+// Vercel Hobby plan: max 60s (default 10s). Extend to handle multiple keywords.
+export const maxDuration = 60;
+
 async function cleanSeedData(): Promise<number> {
   // Delete seed ads (externalId starts with 'seed_')
   const seedAds = await db
