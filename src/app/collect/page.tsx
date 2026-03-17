@@ -1,12 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { DEFAULT_SEARCH_TERMS, DEFAULT_GAME_TERMS } from "@/lib/constants";
 
 interface CollectResult {
   keyword: string;
-  result?: { total: number; new: number; updated: number };
+  total?: number;
+  new?: number;
+  updated?: number;
+  methods?: string[];
+  pages?: string[];
   error?: string;
 }
 
@@ -40,6 +44,7 @@ export default function CollectPage() {
   const [collecting, setCollecting] = useState(false);
   const [progress, setProgress] = useState("");
   const [results, setResults] = useState<CollectResult[]>([]);
+  const abortRef = useRef(false);
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [advertisers, setAdvertisers] = useState<AdvertiserEntry[]>([]);
@@ -82,6 +87,38 @@ export default function CollectPage() {
     if (authenticated) loadData();
   }, [authenticated]);
 
+  const collectSingleKeyword = async (
+    keyword: string,
+    cleanSeed: boolean = false
+  ): Promise<CollectResult> => {
+    try {
+      const res = await fetch("/api/ads/collect", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "my-secret-key-123",
+        },
+        body: JSON.stringify({ keyword, country, cleanSeed }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        return { keyword, error: data.error };
+      }
+
+      return {
+        keyword,
+        total: data.total || 0,
+        new: data.new || 0,
+        updated: data.updated || 0,
+        methods: data.methods || [],
+        pages: data.pages || [],
+      };
+    } catch {
+      return { keyword, error: "네트워크 오류" };
+    }
+  };
+
   const handleCollect = async () => {
     const terms = keywords
       .split(/[,\n]/)
@@ -95,33 +132,40 @@ export default function CollectPage() {
 
     setCollecting(true);
     setResults([]);
-    setProgress(`수집 시작... (${terms.length}개 검색어)`);
+    abortRef.current = false;
 
-    try {
-      const res = await fetch("/api/ads/collect", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": "my-secret-key-123",
-        },
-        body: JSON.stringify({ searchTerms: terms, country }),
-      });
-      const data = await res.json();
+    let totalFound = 0;
+    let totalNew = 0;
 
-      if (data.error) {
-        setProgress(`에러: ${data.error}`);
-      } else {
-        setResults(data.details || []);
-        setProgress(
-          `완료! 총 ${data.totalAdsFound}개 발견, ${data.totalNew}개 신규`
-        );
-        loadData();
+    for (let i = 0; i < terms.length; i++) {
+      if (abortRef.current) {
+        setProgress(`중단됨 (${i}/${terms.length})`);
+        break;
       }
-    } catch (error) {
-      setProgress("수집 중 에러가 발생했습니다");
-    } finally {
-      setCollecting(false);
+
+      const keyword = terms[i];
+      setProgress(`[${i + 1}/${terms.length}] "${keyword}" 수집 중...`);
+
+      // Clean seed data on first keyword only
+      const result = await collectSingleKeyword(keyword, i === 0);
+
+      setResults((prev) => [...prev, result]);
+
+      if (!result.error) {
+        totalFound += result.total || 0;
+        totalNew += result.new || 0;
+      }
     }
+
+    setProgress(
+      `완료! 총 ${totalFound}개 발견, ${totalNew}개 신규 (${terms.length}개 키워드)`
+    );
+    setCollecting(false);
+    loadData();
+  };
+
+  const handleStop = () => {
+    abortRef.current = true;
   };
 
   // Login screen
@@ -223,20 +267,29 @@ export default function CollectPage() {
             </select>
             {keywordCount > 0 && (
               <span className="text-sm text-[#888]">
-                검색어 {keywordCount}개 → 예상 API 호출 약{" "}
-                {keywordCount}~{keywordCount * 3}회
+                검색어 {keywordCount}개 (1개씩 순차 수집)
               </span>
             )}
           </div>
 
-          {/* Collect button */}
-          <button
-            onClick={handleCollect}
-            disabled={collecting}
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
-          >
-            {collecting ? "수집 중..." : "수집 시작"}
-          </button>
+          {/* Collect / Stop buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleCollect}
+              disabled={collecting}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
+            >
+              {collecting ? "수집 중..." : "수집 시작"}
+            </button>
+            {collecting && (
+              <button
+                onClick={handleStop}
+                className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              >
+                중단
+              </button>
+            )}
+          </div>
 
           {/* Progress */}
           {progress && (
@@ -254,8 +307,12 @@ export default function CollectPage() {
                     </span>
                   ) : (
                     <span className="text-green-400">
-                      {r.keyword}: {r.result?.total}개 발견, {r.result?.new}개
-                      신규
+                      {r.keyword}: {r.total}개 발견, {r.new}개 신규
+                      {r.methods && r.methods.length > 0 && (
+                        <span className="text-[#888] ml-2">
+                          ({r.methods.join(", ")})
+                        </span>
+                      )}
                     </span>
                   )}
                 </div>
@@ -298,7 +355,9 @@ export default function CollectPage() {
                           className={`px-2 py-0.5 rounded-full text-xs ${
                             log.status === "success"
                               ? "bg-green-900/50 text-green-400"
-                              : "bg-red-900/50 text-red-400"
+                              : log.status === "no_results"
+                                ? "bg-yellow-900/50 text-yellow-400"
+                                : "bg-red-900/50 text-red-400"
                           }`}
                         >
                           {log.status}

@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collectMultiple } from "@/lib/collector";
+import { collectByKeyword } from "@/lib/collector";
 import { db } from "@/lib/db";
 import { adCreatives, advertisers } from "@/lib/db/schema";
 import { like, sql } from "drizzle-orm";
 import { DEFAULT_SEARCH_TERMS, DEFAULT_GAME_TERMS } from "@/lib/constants";
 
-// Vercel Hobby plan: max 60s (default 10s). Extend to handle multiple keywords.
-export const maxDuration = 60;
-
 async function cleanSeedData(): Promise<number> {
-  // Delete seed ads (externalId starts with 'seed_')
   const seedAds = await db
     .select({ id: adCreatives.id })
     .from(adCreatives)
@@ -19,7 +15,6 @@ async function cleanSeedData(): Promise<number> {
     await db.delete(adCreatives).where(like(adCreatives.externalId, "seed_%"));
   }
 
-  // Delete orphaned advertisers (no ads referencing them)
   await db.delete(advertisers).where(
     sql`${advertisers.id} NOT IN (SELECT DISTINCT ${adCreatives.advertiserId} FROM ${adCreatives} WHERE ${adCreatives.advertiserId} IS NOT NULL)`
   );
@@ -27,46 +22,50 @@ async function cleanSeedData(): Promise<number> {
   return seedAds.length;
 }
 
-function resolveSearchTerms(body: {
-  searchTerms?: string[];
-  useDefaultTerms?: "companies" | "games" | "all";
-}): string[] {
-  // useDefaultTerms: load keywords from server-side constants (avoids encoding issues)
-  if (body.useDefaultTerms) {
-    switch (body.useDefaultTerms) {
-      case "companies":
-        return DEFAULT_SEARCH_TERMS;
-      case "games":
-        return DEFAULT_GAME_TERMS;
-      case "all":
-        return [...DEFAULT_SEARCH_TERMS, ...DEFAULT_GAME_TERMS];
-    }
+// GET: Return available default keyword lists (for client to iterate)
+export async function GET(request: NextRequest) {
+  const apiKey = request.headers.get("x-api-key");
+  if (apiKey !== process.env.COLLECT_API_KEY) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return body.searchTerms || [];
+
+  const preset = request.nextUrl.searchParams.get("preset");
+  let terms: string[] = [];
+  switch (preset) {
+    case "companies":
+      terms = DEFAULT_SEARCH_TERMS;
+      break;
+    case "games":
+      terms = DEFAULT_GAME_TERMS;
+      break;
+    case "all":
+      terms = [...DEFAULT_SEARCH_TERMS, ...DEFAULT_GAME_TERMS];
+      break;
+    default:
+      terms = [...DEFAULT_SEARCH_TERMS, ...DEFAULT_GAME_TERMS];
+  }
+
+  return NextResponse.json({ terms });
 }
 
+// POST: Process a SINGLE keyword per call to stay within Vercel Hobby 10s limit.
+// Client should call this endpoint once per keyword.
 export async function POST(request: NextRequest) {
   try {
-    // Auth check
     const apiKey = request.headers.get("x-api-key");
     if (apiKey !== process.env.COLLECT_API_KEY) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json();
-    const { country = "KR", cleanSeed = false } = body;
+    const { keyword, country = "KR", cleanSeed = false } = body;
 
     let seedCleaned = 0;
     if (cleanSeed) {
       seedCleaned = await cleanSeedData();
     }
 
-    const searchTerms = resolveSearchTerms(body);
-
-    if (searchTerms.length === 0) {
+    if (!keyword || typeof keyword !== "string") {
       if (cleanSeed) {
         return NextResponse.json({
           seedCleaned,
@@ -74,27 +73,18 @@ export async function POST(request: NextRequest) {
         });
       }
       return NextResponse.json(
-        { error: "searchTerms 배열 또는 useDefaultTerms ('companies' | 'games' | 'all') 가 필요합니다" },
+        { error: "keyword (문자열) 가 필요합니다" },
         { status: 400 }
       );
     }
 
-    const results = await collectMultiple(searchTerms, country);
+    const result = await collectByKeyword(keyword, country);
 
-    const summary = {
+    return NextResponse.json({
       seedCleaned,
-      totalKeywords: searchTerms.length,
-      keywords: searchTerms,
-      totalAdsFound: results.reduce((sum, r) => sum + (r.result?.total || 0), 0),
-      totalNew: results.reduce((sum, r) => sum + (r.result?.new || 0), 0),
-      totalUpdated: results.reduce(
-        (sum, r) => sum + (r.result?.updated || 0),
-        0
-      ),
-      details: results,
-    };
-
-    return NextResponse.json(summary);
+      keyword,
+      ...result,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "수집 중 에러 발생";
     return NextResponse.json({ error: message }, { status: 500 });
