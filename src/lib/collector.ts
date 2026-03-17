@@ -1,12 +1,15 @@
 import { db } from "./db";
 import { advertisers, adCreatives, collectionLogs } from "./db/schema";
 import { searchAndCollect } from "./searchapi-client";
+import type { SearchAndCollectResult } from "./searchapi-client";
 import { eq, and } from "drizzle-orm";
 
 interface CollectResult {
   total: number;
   new: number;
   updated: number;
+  methods: string[];
+  pages: string[];
 }
 
 export async function collectByKeyword(
@@ -16,11 +19,15 @@ export async function collectByKeyword(
   let total = 0;
   let newCount = 0;
   let updatedCount = 0;
+  const methods: string[] = [];
+  const pages: string[] = [];
 
   try {
-    const results = await searchAndCollect(keyword, country);
+    const results: SearchAndCollectResult[] = await searchAndCollect(keyword, country);
 
     for (const result of results) {
+      methods.push(result.method);
+      pages.push(`${result.pageName} (${result.pageId})`);
       // Upsert advertiser
       const existing = await db
         .select()
@@ -94,13 +101,15 @@ export async function collectByKeyword(
       }
     }
 
-    // Log success
+    // Log result
+    const status = total > 0 ? "success" : "no_results";
     await db.insert(collectionLogs).values({
       source: "meta",
       searchTerm: keyword,
       adsFound: total,
       adsNew: newCount,
-      status: "success",
+      status,
+      errorMessage: total === 0 ? `No ads found for "${keyword}" (methods: ${methods.join(", ") || "none"})` : undefined,
     });
   } catch (error) {
     const message =
@@ -116,7 +125,7 @@ export async function collectByKeyword(
     throw error;
   }
 
-  return { total, new: newCount, updated: updatedCount };
+  return { total, new: newCount, updated: updatedCount, methods, pages };
 }
 
 export async function collectMultiple(
