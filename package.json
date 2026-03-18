@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p ${PORT:-3000}",
     "lint": "eslint",
     "db:push": "dotenv -e .env.local -- npx drizzle-kit push",
     "db:seed": "dotenv -e .env.local -- npx tsx scripts/seed.ts"
