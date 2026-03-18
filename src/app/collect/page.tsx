@@ -12,6 +12,11 @@ interface CollectResult {
   methods?: string[];
   pages?: string[];
   error?: string;
+  debug?: {
+    pagesFound: number;
+    pageNames: string[];
+    adsPerPage: Record<string, number>;
+  };
 }
 
 interface LogEntry {
@@ -113,6 +118,7 @@ export default function CollectPage() {
         updated: data.updated || 0,
         methods: data.methods || [],
         pages: data.pages || [],
+        debug: data.debug,
       };
     } catch {
       return { keyword, error: "네트워크 오류" };
@@ -306,11 +312,12 @@ export default function CollectPage() {
                       {r.keyword}: {r.error}
                     </span>
                   ) : (
-                    <span className="text-green-400">
+                    <span className={r.total ? "text-green-400" : "text-yellow-400"}>
                       {r.keyword}: {r.total}개 발견, {r.new}개 신규
-                      {r.methods && r.methods.length > 0 && (
+                      {r.debug && (
                         <span className="text-[#888] ml-2">
-                          ({r.methods.join(", ")})
+                          (페이지 {r.debug.pagesFound}개 발견
+                          {r.debug.pageNames.length > 0 && `: ${r.debug.pageNames[0]}`})
                         </span>
                       )}
                     </span>

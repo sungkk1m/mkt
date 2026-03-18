@@ -162,44 +162,6 @@ export async function searchPages(
   return data.page_results || [];
 }
 
-export async function searchAdsByKeyword(
-  keyword: string,
-  country: string = "KR"
-): Promise<NormalizedAd[]> {
-  const apiKey = getApiKey();
-  const allAds: NormalizedAd[] = [];
-  let nextPageToken: string | undefined;
-
-  for (let page = 0; page < MAX_PAGINATION; page++) {
-    const params: Record<string, string> = {
-      engine: "meta_ad_library",
-      search_type: "keyword_unordered",
-      q: keyword,
-      country,
-      ad_type: "all",
-      api_key: apiKey,
-    };
-
-    if (nextPageToken) {
-      params.next_page_token = nextPageToken;
-    }
-
-    const data = await requestWithRetry<SearchApiAdSearchResponse>(
-      BASE_URL,
-      params
-    );
-    const ads = data.ad_results || data.ads || [];
-    const normalized = ads.map((ad) => normalizeAd(ad, country));
-    allAds.push(...normalized);
-
-    nextPageToken =
-      data.next_page_token ||
-      data.serpapi_pagination?.next_page_token;
-    if (!nextPageToken) break;
-  }
-
-  return allAds;
-}
 
 export async function getAdsByPageId(
   pageId: string,
@@ -275,8 +237,8 @@ export async function searchAndCollect(
   debug.pageNames = pages.map((p) => `${p.page_name} (${p.page_id})`);
 
   if (pages.length > 0) {
-    // Process top 3 pages to catch name variants
-    const topPages = pages.slice(0, 3);
+    // Process top 1 page to stay within Vercel Hobby 10s timeout
+    const topPages = pages.slice(0, 1);
     for (const page of topPages) {
       await delay(INTER_CALL_DELAY);
       const ads = await getAdsByPageId(page.page_id, { country });
