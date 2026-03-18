@@ -1,34 +1,56 @@
 // SearchAPI.io Meta Ad Library response types
+// Field names use flexible mapping since the API may return different field names
+// depending on the engine version
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 export interface SearchApiPageResult {
-  page_id: string;
-  page_name: string;
+  // Page search may return name under different keys
+  page_id?: string;
+  id?: string;
+  page_name?: string;
+  name?: string;
   page_category?: string;
+  category?: string;
   likes?: number;
   page_profile_picture_url?: string;
+  profile_picture_url?: string;
+  // Allow any other fields
+  [key: string]: any;
 }
 
 export interface SearchApiAdSnapshot {
   body_text?: string;
+  body?: string;
   title?: string;
   description?: string;
   link_url?: string;
   images?: Array<{
     original_image_url?: string;
     resized_image_url?: string;
+    url?: string;
+    [key: string]: any;
   }>;
   videos?: Array<{
     video_url?: string;
     video_hd_url?: string;
     video_sd_url?: string;
     video_preview_image_url?: string;
+    preview_image_url?: string;
+    [key: string]: any;
   }>;
   cards?: Array<{
     body?: string;
     title?: string;
     link_url?: string;
+    // Card images may be under different keys
     image_url?: string;
+    original_image_url?: string;
+    resized_image_url?: string;
+    image?: string;
+    [key: string]: any;
   }>;
+  [key: string]: any;
 }
 
 export interface SearchApiAd {
@@ -46,27 +68,34 @@ export interface SearchApiAd {
   body?: string;
   title?: string;
   description?: string;
-  images?: Array<{ original_image_url?: string }>;
-  videos?: Array<{ video_url?: string; video_hd_url?: string }>;
+  images?: Array<{ original_image_url?: string; [key: string]: any }>;
+  videos?: Array<{ video_url?: string; video_hd_url?: string; [key: string]: any }>;
+  [key: string]: any;
 }
 
 export interface SearchApiPageSearchResponse {
   page_results?: SearchApiPageResult[];
+  results?: SearchApiPageResult[];
   search_metadata?: {
     status?: string;
+    [key: string]: any;
   };
+  [key: string]: any;
 }
 
 export interface SearchApiAdSearchResponse {
   ad_results?: SearchApiAd[];
   ads?: SearchApiAd[];
+  results?: SearchApiAd[];
   next_page_token?: string;
   serpapi_pagination?: {
     next_page_token?: string;
   };
   search_metadata?: {
     status?: string;
+    [key: string]: any;
   };
+  [key: string]: any;
 }
 
 // Normalized types for internal use

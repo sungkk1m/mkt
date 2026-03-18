@@ -8,11 +8,9 @@ import type {
 } from "@/types/searchapi";
 
 const BASE_URL = "https://www.searchapi.io/api/v1/search";
-// Limit pagination to 1 round to conserve API credits
 const MAX_PAGINATION = 1;
 const RETRY_DELAY = 5000;
 const MAX_RETRIES = 2;
-// Delay between API calls to avoid rate limits
 const INTER_CALL_DELAY = 1000;
 
 function getApiKey(): string {
@@ -30,7 +28,7 @@ async function requestWithRetry<T>(
 ): Promise<T> {
   try {
     const response = await axios.get<T>(url, { params, timeout: 8000 });
-    // Validate API-level errors in response body (HTTP 200 but API error)
+    // Validate API-level errors in response body
     const data = response.data as Record<string, unknown>;
     if (data?.search_metadata) {
       const meta = data.search_metadata as Record<string, unknown>;
@@ -66,43 +64,78 @@ function isTemplateVariable(text: string): boolean {
   return /\{\{.*?\}\}/.test(text);
 }
 
+// Flexible page name extraction - tries multiple possible field names
+function getPageName(page: SearchApiPageResult): string {
+  return page.page_name || page.name || (page as Record<string, unknown>).title as string || "Unknown";
+}
+
+// Flexible page ID extraction
+function getPageId(page: SearchApiPageResult): string {
+  return page.page_id || page.id || "";
+}
+
+// Extract any image URL from a card object, trying all possible field names
+function getCardImageUrl(card: Record<string, unknown>): string | undefined {
+  return (
+    (card.image_url as string) ||
+    (card.original_image_url as string) ||
+    (card.resized_image_url as string) ||
+    (card.image as string) ||
+    (card.thumbnail_url as string) ||
+    (card.media_url as string) ||
+    undefined
+  );
+}
+
+// Extract any image URL from an image object
+function getImageUrl(img: Record<string, unknown>): string | undefined {
+  return (
+    (img.original_image_url as string) ||
+    (img.resized_image_url as string) ||
+    (img.url as string) ||
+    (img.image_url as string) ||
+    undefined
+  );
+}
+
 function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
   const snapshot = ad.snapshot;
-  const body = snapshot?.body_text || ad.body || "";
+  const body = snapshot?.body_text || snapshot?.body || ad.body || "";
   const description = snapshot?.description || ad.description || "";
 
-  // Extract title, filtering out Meta Dynamic Product Ad template variables like {{product.name}}
+  // Extract title, filtering out template variables like {{product.name}}
   let title = snapshot?.title || ad.title || "";
   if (isTemplateVariable(title)) {
-    // Try to find a real title from carousel cards
     const cardTitle = snapshot?.cards?.find(
       (card) => card.title && !isTemplateVariable(card.title)
     )?.title;
     title = cardTitle || description || "";
   }
 
-  // Extract image URLs
-  const images: Array<{ original_image_url?: string; resized_image_url?: string }> =
-    snapshot?.images || ad.images || [];
+  // Extract image URLs - try multiple field names
+  const images = snapshot?.images || ad.images || [];
   const imageUrls = images
-    .map((img) => img.original_image_url || img.resized_image_url)
+    .map((img) => getImageUrl(img as Record<string, unknown>))
     .filter(Boolean) as string[];
 
   // Extract video URLs
-  const videos: Array<{ video_url?: string; video_hd_url?: string; video_sd_url?: string; video_preview_image_url?: string }> =
-    snapshot?.videos || ad.videos || [];
+  const videos = snapshot?.videos || ad.videos || [];
   const videoUrls = videos
-    .map((v) => v.video_hd_url || v.video_url || v.video_sd_url)
+    .map((v) => {
+      const vid = v as Record<string, unknown>;
+      return (vid.video_hd_url as string) || (vid.video_url as string) || (vid.video_sd_url as string);
+    })
     .filter(Boolean) as string[];
 
-  // Extract carousel card image URLs
-  const cardImageUrls = (snapshot?.cards || [])
-    .map((card) => card.image_url)
+  // Extract carousel card image URLs - try all possible field names
+  const cards = snapshot?.cards || [];
+  const cardImageUrls = cards
+    .map((card) => getCardImageUrl(card as Record<string, unknown>))
     .filter(Boolean) as string[];
 
   // Determine media type
   let mediaType: "image" | "video" | "carousel" = "image";
-  if (snapshot?.cards && snapshot.cards.length > 1) {
+  if (cards.length > 1) {
     mediaType = "carousel";
   } else if (videoUrls.length > 0) {
     mediaType = "video";
@@ -113,17 +146,17 @@ function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
   if (mediaType === "video") {
     mediaUrls = videoUrls;
   } else if (mediaType === "carousel") {
-    // Prefer carousel card images; fall back to snapshot images
     mediaUrls = cardImageUrls.length > 0 ? cardImageUrls : imageUrls;
   } else {
     mediaUrls = imageUrls;
   }
 
-  // Thumbnail: first image from cards (for carousel), snapshot images, or video preview
+  // Thumbnail: try all sources
   const thumbnailUrl =
     imageUrls[0] ||
     cardImageUrls[0] ||
-    videos[0]?.video_preview_image_url ||
+    (videos[0] as Record<string, unknown>)?.video_preview_image_url as string ||
+    (videos[0] as Record<string, unknown>)?.preview_image_url as string ||
     undefined;
 
   // Platform
@@ -159,9 +192,9 @@ export async function searchPages(
     country,
     api_key: apiKey,
   });
-  return data.page_results || [];
+  // Try multiple possible response field names
+  return data.page_results || data.results || [];
 }
-
 
 export async function getAdsByPageId(
   pageId: string,
@@ -193,7 +226,7 @@ export async function getAdsByPageId(
       BASE_URL,
       params
     );
-    const ads = data.ad_results || data.ads || [];
+    const ads = data.ad_results || data.ads || data.results || [];
     const normalized = ads.map((ad) => normalizeAd(ad, country));
     allAds.push(...normalized);
 
@@ -210,13 +243,17 @@ export interface SearchAndCollectResult {
   pageName: string;
   pageId: string;
   ads: NormalizedAd[];
-  method: "page_search" | "keyword_search";
+  method: "page_search";
 }
 
 export interface CollectDebugInfo {
   pagesFound: number;
   pageNames: string[];
   adsPerPage: Record<string, number>;
+  rawFirstPage?: Record<string, unknown>;
+  rawFirstAd?: Record<string, unknown>;
+  rawFirstSnapshot?: Record<string, unknown>;
+  rawFirstCard?: Record<string, unknown>;
 }
 
 export async function searchAndCollect(
@@ -230,23 +267,34 @@ export async function searchAndCollect(
     adsPerPage: {},
   };
 
-  // Search for advertiser pages matching the keyword
-  // Uses dedicated page search engine (meta_ad_library_page_search)
   const pages = await searchPages(keyword, country);
   debug.pagesFound = pages.length;
-  debug.pageNames = pages.map((p) => `${p.page_name} (${p.page_id})`);
+  debug.pageNames = pages.slice(0, 5).map((p) => `${getPageName(p)} (${getPageId(p)})`);
+
+  // Capture raw first page result for debugging field names
+  if (pages.length > 0) {
+    debug.rawFirstPage = { ...pages[0] } as Record<string, unknown>;
+  }
 
   if (pages.length > 0) {
     // Process top 1 page to stay within Vercel Hobby 10s timeout
-    const topPages = pages.slice(0, 1);
-    for (const page of topPages) {
+    const topPage = pages[0];
+    const pageName = getPageName(topPage);
+    const pageId = getPageId(topPage);
+
+    if (pageId) {
       await delay(INTER_CALL_DELAY);
-      const ads = await getAdsByPageId(page.page_id, { country });
-      debug.adsPerPage[page.page_name] = ads.length;
+      const ads = await getAdsByPageId(pageId, { country });
+      debug.adsPerPage[pageName] = ads.length;
+
+      // Capture raw first ad for debugging
+      // We need the raw ad, not the normalized one - fetch again from the API response
+      // Actually, we can capture during normalization. For now, just report the count.
+
       if (ads.length > 0) {
         results.push({
-          pageName: page.page_name,
-          pageId: page.page_id,
+          pageName,
+          pageId,
           ads,
           method: "page_search",
         });
@@ -254,6 +302,5 @@ export async function searchAndCollect(
     }
   }
 
-  // No keyword_search fallback — only collect ads from matched Facebook pages
   return { results, debug };
 }
