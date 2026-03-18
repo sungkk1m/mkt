@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { advertisers, adCreatives, collectionLogs } from "./db/schema";
 import { searchAndCollect } from "./searchapi-client";
-import type { SearchAndCollectResult } from "./searchapi-client";
+import type { CollectDebugInfo } from "./searchapi-client";
 import { eq, and } from "drizzle-orm";
 
 interface CollectResult {
@@ -10,6 +10,7 @@ interface CollectResult {
   updated: number;
   methods: string[];
   pages: string[];
+  debug?: CollectDebugInfo;
 }
 
 export async function collectByKeyword(
@@ -22,10 +23,13 @@ export async function collectByKeyword(
   const methods: string[] = [];
   const pages: string[] = [];
 
-  try {
-    const results: SearchAndCollectResult[] = await searchAndCollect(keyword, country);
+  let debug: CollectDebugInfo | undefined;
 
-    for (const result of results) {
+  try {
+    const collected = await searchAndCollect(keyword, country);
+    debug = collected.debug;
+
+    for (const result of collected.results) {
       methods.push(result.method);
       pages.push(`${result.pageName} (${result.pageId})`);
       // Upsert advertiser
@@ -113,7 +117,9 @@ export async function collectByKeyword(
       adsFound: total,
       adsNew: newCount,
       status,
-      errorMessage: total === 0 ? `No ads found for "${keyword}" (methods: ${methods.join(", ") || "none"})` : undefined,
+      errorMessage: total === 0
+        ? `No ads found for "${keyword}" (pages found: ${debug?.pagesFound ?? "?"}, pages: ${debug?.pageNames?.join(", ") || "none"}, methods: ${methods.join(", ") || "none"})`
+        : undefined,
     });
   } catch (error) {
     const message =
@@ -129,7 +135,7 @@ export async function collectByKeyword(
     throw error;
   }
 
-  return { total, new: newCount, updated: updatedCount, methods, pages };
+  return { total, new: newCount, updated: updatedCount, methods, pages, debug };
 }
 
 export async function collectMultiple(

@@ -153,8 +153,7 @@ async function main() {
       // Search pages
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pageData = await requestWithRetry<any>(BASE_URL, {
-        engine: "meta_ad_library",
-        search_type: "page",
+        engine: "meta_ad_library_page_search",
         q: keyword,
         country: "KR",
         api_key: apiKey,
@@ -173,7 +172,6 @@ async function main() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const adData = await requestWithRetry<any>(BASE_URL, {
         engine: "meta_ad_library",
-        search_type: "keyword_unordered",
         page_id: topPage.page_id,
         country: "KR",
         ad_type: "all",

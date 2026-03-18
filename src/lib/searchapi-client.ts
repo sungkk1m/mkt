@@ -29,7 +29,17 @@ async function requestWithRetry<T>(
   retries = 0
 ): Promise<T> {
   try {
-    const response = await axios.get<T>(url, { params, timeout: 30000 });
+    const response = await axios.get<T>(url, { params, timeout: 8000 });
+    // Validate API-level errors in response body (HTTP 200 but API error)
+    const data = response.data as Record<string, unknown>;
+    if (data?.search_metadata) {
+      const meta = data.search_metadata as Record<string, unknown>;
+      if (meta.status === "Error" || meta.status === "error") {
+        throw new Error(
+          `SearchAPI 응답 에러: ${meta.error || meta.message || JSON.stringify(meta)}`
+        );
+      }
+    }
     return response.data;
   } catch (error) {
     if (error instanceof AxiosError) {
@@ -144,8 +154,7 @@ export async function searchPages(
 ): Promise<SearchApiPageResult[]> {
   const apiKey = getApiKey();
   const data = await requestWithRetry<SearchApiPageSearchResponse>(BASE_URL, {
-    engine: "meta_ad_library",
-    search_type: "page",
+    engine: "meta_ad_library_page_search",
     q: keyword,
     country,
     api_key: apiKey,
@@ -204,7 +213,6 @@ export async function getAdsByPageId(
   for (let page = 0; page < MAX_PAGINATION; page++) {
     const params: Record<string, string> = {
       engine: "meta_ad_library",
-      search_type: "keyword_unordered",
       page_id: pageId,
       country,
       ad_type: "all",
@@ -243,15 +251,28 @@ export interface SearchAndCollectResult {
   method: "page_search" | "keyword_search";
 }
 
+export interface CollectDebugInfo {
+  pagesFound: number;
+  pageNames: string[];
+  adsPerPage: Record<string, number>;
+}
+
 export async function searchAndCollect(
   keyword: string,
   country: string = "KR"
-): Promise<SearchAndCollectResult[]> {
+): Promise<{ results: SearchAndCollectResult[]; debug: CollectDebugInfo }> {
   const results: SearchAndCollectResult[] = [];
+  const debug: CollectDebugInfo = {
+    pagesFound: 0,
+    pageNames: [],
+    adsPerPage: {},
+  };
 
   // Search for advertiser pages matching the keyword
-  // Only page-matched ads are collected to ensure keyword targets a specific Facebook page
+  // Uses dedicated page search engine (meta_ad_library_page_search)
   const pages = await searchPages(keyword, country);
+  debug.pagesFound = pages.length;
+  debug.pageNames = pages.map((p) => `${p.page_name} (${p.page_id})`);
 
   if (pages.length > 0) {
     // Process top 3 pages to catch name variants
@@ -259,6 +280,7 @@ export async function searchAndCollect(
     for (const page of topPages) {
       await delay(INTER_CALL_DELAY);
       const ads = await getAdsByPageId(page.page_id, { country });
+      debug.adsPerPage[page.page_name] = ads.length;
       if (ads.length > 0) {
         results.push({
           pageName: page.page_name,
@@ -271,5 +293,5 @@ export async function searchAndCollect(
   }
 
   // No keyword_search fallback — only collect ads from matched Facebook pages
-  return results;
+  return { results, debug };
 }
