@@ -70,7 +70,19 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
         <div className="flex flex-col md:flex-row gap-6 px-6 pb-6">
           {/* Media */}
           <div className="md:w-1/2 flex-shrink-0">
-            {isVideo && mediaUrls[0] ? (
+            {ad.mediaType === "carousel" && mediaUrls.length > 0 ? (
+              /* Carousel: show all images in a 2-column grid */
+              <div className="grid grid-cols-2 gap-2">
+                {mediaUrls.map((url, i) => (
+                  <img
+                    key={i}
+                    src={url}
+                    alt={`carousel ${i + 1}`}
+                    className="w-full aspect-square object-cover rounded-lg"
+                  />
+                ))}
+              </div>
+            ) : isVideo && mediaUrls[0] ? (
               <video
                 src={mediaUrls[0]}
                 controls
@@ -86,20 +98,6 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
             ) : (
               <div className="w-full aspect-video bg-[#111] rounded-lg flex items-center justify-center text-[#555]">
                 미디어 없음
-              </div>
-            )}
-
-            {/* Additional images for carousel */}
-            {ad.mediaType === "carousel" && mediaUrls.length > 1 && (
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                {mediaUrls.slice(1, 4).map((url, i) => (
-                  <img
-                    key={i}
-                    src={url}
-                    alt={`carousel ${i + 1}`}
-                    className="w-full aspect-square object-cover rounded-lg"
-                  />
-                ))}
               </div>
             )}
           </div>
