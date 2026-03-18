@@ -94,6 +94,10 @@ export async function collectByKeyword(
             .set({
               lastSeen: new Date().toISOString().split("T")[0],
               isActive: ad.isActive ? 1 : 0,
+              // Refresh media and title data to fix previously missing carousel images / template titles
+              mediaUrls: JSON.stringify(ad.mediaUrls),
+              thumbnailUrl: ad.thumbnailUrl || ad.mediaUrls[0] || null,
+              textTitle: ad.textTitle,
             })
             .where(eq(adCreatives.id, existingAd[0].id));
           updatedCount++;

@@ -52,11 +52,24 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function isTemplateVariable(text: string): boolean {
+  return /\{\{.*?\}\}/.test(text);
+}
+
 function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
   const snapshot = ad.snapshot;
   const body = snapshot?.body_text || ad.body || "";
-  const title = snapshot?.title || ad.title || "";
   const description = snapshot?.description || ad.description || "";
+
+  // Extract title, filtering out Meta Dynamic Product Ad template variables like {{product.name}}
+  let title = snapshot?.title || ad.title || "";
+  if (isTemplateVariable(title)) {
+    // Try to find a real title from carousel cards
+    const cardTitle = snapshot?.cards?.find(
+      (card) => card.title && !isTemplateVariable(card.title)
+    )?.title;
+    title = cardTitle || description || "";
+  }
 
   // Extract image URLs
   const images: Array<{ original_image_url?: string; resized_image_url?: string }> =
@@ -72,6 +85,11 @@ function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
     .map((v) => v.video_hd_url || v.video_url || v.video_sd_url)
     .filter(Boolean) as string[];
 
+  // Extract carousel card image URLs
+  const cardImageUrls = (snapshot?.cards || [])
+    .map((card) => card.image_url)
+    .filter(Boolean) as string[];
+
   // Determine media type
   let mediaType: "image" | "video" | "carousel" = "image";
   if (snapshot?.cards && snapshot.cards.length > 1) {
@@ -81,11 +99,20 @@ function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
   }
 
   // Combine all media URLs
-  const mediaUrls = mediaType === "video" ? videoUrls : imageUrls;
+  let mediaUrls: string[];
+  if (mediaType === "video") {
+    mediaUrls = videoUrls;
+  } else if (mediaType === "carousel") {
+    // Prefer carousel card images; fall back to snapshot images
+    mediaUrls = cardImageUrls.length > 0 ? cardImageUrls : imageUrls;
+  } else {
+    mediaUrls = imageUrls;
+  }
 
-  // Thumbnail: first image, or video preview
+  // Thumbnail: first image from cards (for carousel), snapshot images, or video preview
   const thumbnailUrl =
     imageUrls[0] ||
+    cardImageUrls[0] ||
     videos[0]?.video_preview_image_url ||
     undefined;
 
@@ -222,49 +249,27 @@ export async function searchAndCollect(
 ): Promise<SearchAndCollectResult[]> {
   const results: SearchAndCollectResult[] = [];
 
-  // Strategy 1: Search for advertiser pages
+  // Search for advertiser pages matching the keyword
+  // Only page-matched ads are collected to ensure keyword targets a specific Facebook page
   const pages = await searchPages(keyword, country);
 
   if (pages.length > 0) {
-    // Process top 1 page to conserve API credits (first result is most relevant)
-    const topPage = pages[0];
-    await delay(INTER_CALL_DELAY);
-    const ads = await getAdsByPageId(topPage.page_id, { country });
-    if (ads.length > 0) {
-      results.push({
-        pageName: topPage.page_name,
-        pageId: topPage.page_id,
-        ads,
-        method: "page_search",
-      });
-    }
-  }
-
-  // Strategy 2: If page search yielded no ads, search ads by keyword directly
-  if (results.length === 0) {
-    await delay(INTER_CALL_DELAY);
-    const keywordAds = await searchAdsByKeyword(keyword, country);
-    if (keywordAds.length > 0) {
-      // Group by page
-      const pageMap = new Map<string, NormalizedAd[]>();
-      for (const ad of keywordAds) {
-        const key = ad.pageId || "unknown";
-        if (!pageMap.has(key)) {
-          pageMap.set(key, []);
-        }
-        pageMap.get(key)!.push(ad);
-      }
-
-      for (const [pageId, ads] of pageMap) {
+    // Process top 3 pages to catch name variants
+    const topPages = pages.slice(0, 3);
+    for (const page of topPages) {
+      await delay(INTER_CALL_DELAY);
+      const ads = await getAdsByPageId(page.page_id, { country });
+      if (ads.length > 0) {
         results.push({
-          pageName: ads[0].pageName || keyword,
-          pageId,
+          pageName: page.page_name,
+          pageId: page.page_id,
           ads,
-          method: "keyword_search",
+          method: "page_search",
         });
       }
     }
   }
 
+  // No keyword_search fallback — only collect ads from matched Facebook pages
   return results;
 }
