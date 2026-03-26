@@ -12,6 +12,7 @@
 | `DATABASE_URL` | Turso 데이터베이스 URL |
 | `DATABASE_AUTH_TOKEN` | Turso 인증 토큰 |
 | `COLLECT_API_KEY` | 수집 API 보호용 비밀 키 |
+| `NEXT_PUBLIC_COLLECT_API_KEY` | 클라이언트용 수집 API 키 (COLLECT_API_KEY와 동일 값) |
 | `ADMIN_PASSWORD` | 수집 관리 페이지 비밀번호 |
 
 ## 로컬 실행

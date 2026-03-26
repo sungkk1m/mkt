@@ -44,7 +44,10 @@ export default function CollectPage() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
 
+  const [collectMode, setCollectMode] = useState<"keyword" | "page">("keyword");
   const [keywords, setKeywords] = useState("");
+  const [pageInput, setPageInput] = useState("");
+  const [pageNameInput, setPageNameInput] = useState("");
   const [country, setCountry] = useState("KR");
   const [collecting, setCollecting] = useState(false);
   const [progress, setProgress] = useState("");
@@ -101,7 +104,7 @@ export default function CollectPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": "my-secret-key-123",
+          "x-api-key": process.env.NEXT_PUBLIC_COLLECT_API_KEY || "",
         },
         body: JSON.stringify({ keyword, country, cleanSeed }),
       });
@@ -123,6 +126,70 @@ export default function CollectPage() {
     } catch {
       return { keyword, error: "네트워크 오류" };
     }
+  };
+
+  // Extract page ID from various Facebook URL formats
+  const extractPageId = (input: string): string => {
+    const trimmed = input.trim();
+    // Already a numeric ID
+    if (/^\d+$/.test(trimmed)) return trimmed;
+    // Facebook URL patterns: /pages/PageName/123456 or /PageName or fb.com/123456
+    const pageIdMatch = trimmed.match(/facebook\.com\/(?:pages\/[^/]+\/)?(\d+)/);
+    if (pageIdMatch) return pageIdMatch[1];
+    // Just return as-is (could be a page name for search)
+    return trimmed;
+  };
+
+  const collectSinglePage = async (
+    pageId: string,
+    pageName: string
+  ): Promise<CollectResult> => {
+    try {
+      const res = await fetch("/api/ads/collect", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.NEXT_PUBLIC_COLLECT_API_KEY || "",
+        },
+        body: JSON.stringify({ pageId, pageName, country }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        return { keyword: pageName || pageId, error: data.error };
+      }
+      return {
+        keyword: pageName || pageId,
+        total: data.total || 0,
+        new: data.new || 0,
+        updated: data.updated || 0,
+        methods: data.methods || [],
+        pages: data.pages || [],
+      };
+    } catch {
+      return { keyword: pageName || pageId, error: "네트워크 오류" };
+    }
+  };
+
+  const handleCollectByPage = async () => {
+    const pageId = extractPageId(pageInput);
+    if (!pageId) {
+      alert("페이지 ID 또는 URL을 입력해주세요");
+      return;
+    }
+
+    setCollecting(true);
+    setResults([]);
+    setProgress(`"${pageNameInput || pageId}" 페이지 광고 수집 중...`);
+
+    const result = await collectSinglePage(pageId, pageNameInput || pageId);
+    setResults([result]);
+
+    const msg = result.error
+      ? `오류: ${result.error}`
+      : `완료! ${result.total}개 발견, ${result.new}개 신규`;
+    setProgress(msg);
+    setCollecting(false);
+    loadData();
   };
 
   const handleCollect = async () => {
@@ -235,67 +302,130 @@ export default function CollectPage() {
         <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-6">
           <h2 className="text-lg font-semibold mb-4">수집 실행</h2>
 
-          {/* Quick buttons */}
-          <div className="flex gap-2 mb-4">
+          {/* Mode Tabs */}
+          <div className="flex gap-1 mb-4 bg-[#0f0f0f] rounded-lg p-1 w-fit">
             <button
-              onClick={() => setKeywords(DEFAULT_SEARCH_TERMS.join(", "))}
-              className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-[#333] rounded-lg text-sm transition-colors"
+              onClick={() => setCollectMode("keyword")}
+              className={`px-4 py-2 rounded-md text-sm transition-colors ${
+                collectMode === "keyword"
+                  ? "bg-blue-600 text-white"
+                  : "text-[#888] hover:text-white"
+              }`}
             >
-              기본 검색어
+              키워드 검색
             </button>
             <button
-              onClick={() => setKeywords(DEFAULT_GAME_TERMS.join(", "))}
-              className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-[#333] rounded-lg text-sm transition-colors"
+              onClick={() => setCollectMode("page")}
+              className={`px-4 py-2 rounded-md text-sm transition-colors ${
+                collectMode === "page"
+                  ? "bg-blue-600 text-white"
+                  : "text-[#888] hover:text-white"
+              }`}
             >
-              인기 게임
+              페이지 직접 수집
             </button>
           </div>
 
-          {/* Input */}
-          <textarea
-            value={keywords}
-            onChange={(e) => setKeywords(e.target.value)}
-            placeholder="검색어를 입력하세요 (쉼표 또는 줄바꿈으로 구분)"
-            rows={3}
-            className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 mb-3 text-sm focus:outline-none focus:border-blue-500 resize-none"
-          />
+          {collectMode === "keyword" ? (
+            <>
+              {/* Quick buttons */}
+              <div className="flex gap-2 mb-4">
+                <button
+                  onClick={() => setKeywords(DEFAULT_SEARCH_TERMS.join(", "))}
+                  className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-[#333] rounded-lg text-sm transition-colors"
+                >
+                  기본 검색어
+                </button>
+                <button
+                  onClick={() => setKeywords(DEFAULT_GAME_TERMS.join(", "))}
+                  className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-[#333] rounded-lg text-sm transition-colors"
+                >
+                  인기 게임
+                </button>
+              </div>
 
-          {/* Country + info */}
-          <div className="flex items-center gap-4 mb-4">
-            <select
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-              className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="KR">한국 (KR)</option>
-              <option value="JP">일본 (JP)</option>
-              <option value="US">미국 (US)</option>
-            </select>
-            {keywordCount > 0 && (
-              <span className="text-sm text-[#888]">
-                검색어 {keywordCount}개 (1개씩 순차 수집)
-              </span>
-            )}
-          </div>
+              {/* Input */}
+              <textarea
+                value={keywords}
+                onChange={(e) => setKeywords(e.target.value)}
+                placeholder="검색어를 입력하세요 (쉼표 또는 줄바꿈으로 구분)"
+                rows={3}
+                className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 mb-3 text-sm focus:outline-none focus:border-blue-500 resize-none"
+              />
 
-          {/* Collect / Stop buttons */}
-          <div className="flex gap-2">
-            <button
-              onClick={handleCollect}
-              disabled={collecting}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
-            >
-              {collecting ? "수집 중..." : "수집 시작"}
-            </button>
-            {collecting && (
+              {/* Country + info */}
+              <div className="flex items-center gap-4 mb-4">
+                <select
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value)}
+                  className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="KR">한국 (KR)</option>
+                  <option value="JP">일본 (JP)</option>
+                  <option value="US">미국 (US)</option>
+                </select>
+                {keywordCount > 0 && (
+                  <span className="text-sm text-[#888]">
+                    검색어 {keywordCount}개 (1개씩 순차 수집)
+                  </span>
+                )}
+              </div>
+
+              {/* Collect / Stop buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCollect}
+                  disabled={collecting}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
+                >
+                  {collecting ? "수집 중..." : "수집 시작"}
+                </button>
+                {collecting && (
+                  <button
+                    onClick={handleStop}
+                    className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+                  >
+                    중단
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Page ID direct input */}
+              <div className="space-y-3 mb-4">
+                <input
+                  value={pageInput}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  placeholder="페이스북 페이지 ID 또는 URL (예: 123456789 또는 https://facebook.com/pages/GameName/123456789)"
+                  className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500"
+                />
+                <input
+                  value={pageNameInput}
+                  onChange={(e) => setPageNameInput(e.target.value)}
+                  placeholder="페이지 이름 (선택, 예: Supercell)"
+                  className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500"
+                />
+                <select
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value)}
+                  className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="KR">한국 (KR)</option>
+                  <option value="JP">일본 (JP)</option>
+                  <option value="US">미국 (US)</option>
+                </select>
+              </div>
+
               <button
-                onClick={handleStop}
-                className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+                onClick={handleCollectByPage}
+                disabled={collecting || !pageInput.trim()}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
               >
-                중단
+                {collecting ? "수집 중..." : "페이지 수집"}
               </button>
-            )}
-          </div>
+            </>
+          )}
 
           {/* Progress */}
           {progress && (
