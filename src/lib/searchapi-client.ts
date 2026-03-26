@@ -183,7 +183,10 @@ function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
   const platform = platforms[0] || "facebook";
 
   return {
-    externalId: ad.ad_id || ad.id || `${ad.page_id}_${Date.now()}`,
+    // CRITICAL: ad.id is often a result index (1,2,3...) NOT a unique ad identifier.
+    // Use ad_archive_id or ad_id which are truly unique per ad.
+    // Fallback includes page_id to avoid cross-advertiser collisions.
+    externalId: ad.ad_archive_id || ad.ad_id || ad.archive_id || `${ad.page_id || "unknown"}_${ad.ad_delivery_start_time || ""}_${Date.now()}`,
     textBody: cleanBody || undefined,
     textTitle: title || undefined,
     textDescription: cleanDescription || undefined,
