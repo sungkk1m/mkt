@@ -43,6 +43,7 @@ export default function CollectPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
+  const [apiKey, setApiKey] = useState("");
 
   const [collectMode, setCollectMode] = useState<"keyword" | "page">("keyword");
   const [keywords, setKeywords] = useState("");
@@ -66,8 +67,11 @@ export default function CollectPage() {
         body: JSON.stringify({ password }),
       });
       const data = await res.json();
-      if (data.success) {
+      if (data.success && data.apiKey) {
+        setApiKey(data.apiKey);
         setAuthenticated(true);
+      } else if (data.success) {
+        setAuthError("서버에서 API 키를 받지 못했습니다. 환경변수를 확인하세요.");
       } else {
         setAuthError("비밀번호가 올바르지 않습니다");
       }
@@ -104,7 +108,7 @@ export default function CollectPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": process.env.NEXT_PUBLIC_COLLECT_API_KEY || "",
+          "x-api-key": apiKey,
         },
         body: JSON.stringify({ keyword, country, cleanSeed }),
       });
@@ -149,7 +153,7 @@ export default function CollectPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": process.env.NEXT_PUBLIC_COLLECT_API_KEY || "",
+          "x-api-key": apiKey,
         },
         body: JSON.stringify({ pageId, pageName, country }),
       });
