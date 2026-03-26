@@ -64,8 +64,36 @@ export default function CollectPage() {
   const [pageSearching, setPageSearching] = useState(false);
   const [showIdGuide, setShowIdGuide] = useState(false);
 
+  // Delete state
+  const [deleteTarget, setDeleteTarget] = useState<AdvertiserEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [advertisers, setAdvertisers] = useState<AdvertiserEntry[]>([]);
+
+  const handleDelete = async (adv: AdvertiserEntry) => {
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/ads/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+        },
+        body: JSON.stringify({ advertiserName: adv.name }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(`삭제 실패: ${data.error}`);
+      }
+    } catch {
+      alert("네트워크 오류");
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+      loadData();
+    }
+  };
 
   const handleLogin = async () => {
     setAuthError("");
@@ -702,15 +730,62 @@ export default function CollectPage() {
                       <p className="text-xs text-[#888]">{adv.genre}</p>
                     )}
                   </div>
-                  <span className="text-sm text-[#888]">
-                    {adv.adCount}개 광고
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-[#888]">
+                      {adv.adCount}개 광고
+                    </span>
+                    <button
+                      onClick={() => setDeleteTarget(adv)}
+                      disabled={adv.adCount === 0 || collecting}
+                      className="text-xs text-red-400 hover:text-red-300 disabled:text-[#555] disabled:cursor-not-allowed transition-colors"
+                    >
+                      삭제
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </div>
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !deleting) setDeleteTarget(null);
+          }}
+        >
+          <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold mb-3 text-red-400">광고 삭제 확인</h3>
+            <p className="text-sm text-[#ccc] mb-2">
+              <span className="font-medium text-white">{deleteTarget.name}</span>의
+              광고 <span className="text-red-400 font-bold">{deleteTarget.adCount}개</span>를
+              모두 삭제하시겠습니까?
+            </p>
+            <p className="text-xs text-[#888] mb-6">
+              이 작업은 되돌릴 수 없습니다. 해당 광고주와 모든 광고 데이터가 영구 삭제됩니다.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] text-white rounded-lg text-sm transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => handleDelete(deleteTarget)}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
+              >
+                {deleting ? "삭제 중..." : `${deleteTarget.adCount}개 삭제`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
