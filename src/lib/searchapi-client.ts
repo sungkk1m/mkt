@@ -127,6 +127,10 @@ function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
     title = cardTitle || description || "";
   }
 
+  // Clean template variables from body/description too
+  const cleanBody = isTemplateVariable(body) ? "" : body;
+  const cleanDescription = isTemplateVariable(description) ? "" : description;
+
   // Extract image URLs - try multiple field names
   const images = snapshot?.images || ad.images || [];
   const imageUrls = images
@@ -180,9 +184,9 @@ function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
 
   return {
     externalId: ad.ad_id || ad.id || `${ad.page_id}_${Date.now()}`,
-    textBody: body || undefined,
+    textBody: cleanBody || undefined,
     textTitle: title || undefined,
-    textDescription: description || undefined,
+    textDescription: cleanDescription || undefined,
     snapshotUrl: ad.ad_snapshot_url || undefined,
     mediaType,
     mediaUrls,

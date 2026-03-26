@@ -21,14 +21,18 @@ export async function GET(request: NextRequest) {
     const conditions = [];
 
     if (advertiser) {
-      // Find advertiser ID by name
-      const adv = await db
-        .select()
+      // Find ALL advertisers with this name (could be duplicates with different pageIds)
+      const advs = await db
+        .select({ id: advertisers.id })
         .from(advertisers)
-        .where(eq(advertisers.name, advertiser))
-        .limit(1);
-      if (adv.length > 0) {
-        conditions.push(eq(adCreatives.advertiserId, adv[0].id));
+        .where(eq(advertisers.name, advertiser));
+      if (advs.length === 1) {
+        conditions.push(eq(adCreatives.advertiserId, advs[0].id));
+      } else if (advs.length > 1) {
+        const ids = advs.map((a) => a.id);
+        conditions.push(
+          sql`${adCreatives.advertiserId} IN (${sql.raw(ids.join(","))})`
+        );
       }
     }
 
@@ -62,10 +66,11 @@ export async function GET(request: NextRequest) {
     const total = totalResult[0].count;
 
     // Get data with advertiser name
+    // Default sort by lastSeen (most recently collected/updated first)
     const orderBy =
       sort === "oldest"
         ? asc(adCreatives.createdAt)
-        : desc(adCreatives.createdAt);
+        : desc(adCreatives.lastSeen);
 
     const data = await db
       .select({
