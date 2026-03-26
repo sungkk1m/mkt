@@ -55,6 +55,8 @@ export interface SearchApiAdSnapshot {
 
 export interface SearchApiAd {
   ad_id?: string;
+  ad_archive_id?: string;
+  archive_id?: string;
   id?: string;
   page_id?: string;
   page_name?: string;
