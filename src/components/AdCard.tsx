@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useCallback } from "react";
+
 interface Ad {
   id: number;
   advertiserName?: string | null;
@@ -28,9 +30,69 @@ const mediaTypeBadge: Record<string, { label: string; color: string }> = {
   carousel: { label: "캐러셀", color: "bg-green-600" },
 };
 
+function parseMediaUrls(raw?: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function AdThumbnail({ src, fallbackUrls }: { src?: string | null; fallbackUrls: string[] }) {
+  const [failed, setFailed] = useState(false);
+  const [fallbackIndex, setFallbackIndex] = useState(0);
+
+  const handleError = useCallback(() => {
+    // Try next fallback URL from mediaUrls
+    if (fallbackIndex < fallbackUrls.length) {
+      setFallbackIndex((i) => i + 1);
+    } else {
+      setFailed(true);
+    }
+  }, [fallbackIndex, fallbackUrls.length]);
+
+  if (failed || (!src && fallbackUrls.length === 0)) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-[#555] text-sm">
+        No Image
+      </div>
+    );
+  }
+
+  // Determine which URL to show: primary src first, then fallbacks
+  let currentSrc: string;
+  if (!failed && src && fallbackIndex === 0) {
+    currentSrc = src;
+  } else {
+    const idx = src ? fallbackIndex - 1 : fallbackIndex;
+    if (idx >= 0 && idx < fallbackUrls.length) {
+      currentSrc = fallbackUrls[idx];
+    } else {
+      return (
+        <div className="w-full h-full flex items-center justify-center text-[#555] text-sm">
+          No Image
+        </div>
+      );
+    }
+  }
+
+  return (
+    <img
+      src={currentSrc}
+      alt="ad thumbnail"
+      className="w-full h-full object-cover"
+      loading="lazy"
+      onError={handleError}
+    />
+  );
+}
+
 export default function AdCard({ ad, onClick }: AdCardProps) {
   const badge = mediaTypeBadge[ad.mediaType || "image"] || mediaTypeBadge.image;
   const text = ad.textBody || ad.textTitle || ad.textDescription || "";
+  const fallbackUrls = parseMediaUrls(ad.mediaUrls);
 
   return (
     <div
@@ -39,18 +101,7 @@ export default function AdCard({ ad, onClick }: AdCardProps) {
     >
       {/* Thumbnail */}
       <div className="relative aspect-video bg-[#111] overflow-hidden">
-        {ad.thumbnailUrl ? (
-          <img
-            src={ad.thumbnailUrl}
-            alt="ad thumbnail"
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-[#555] text-sm">
-            No Image
-          </div>
-        )}
+        <AdThumbnail src={ad.thumbnailUrl} fallbackUrls={fallbackUrls} />
         {/* Media type badge */}
         <span
           className={`absolute top-2 right-2 ${badge.color} text-white text-xs px-2 py-0.5 rounded-full`}
