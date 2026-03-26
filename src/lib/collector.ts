@@ -1,7 +1,8 @@
 import { db } from "./db";
 import { advertisers, adCreatives, collectionLogs } from "./db/schema";
-import { searchAndCollect, getAdsByPageId } from "./searchapi-client";
+import { searchAndCollect, getAdsByPageId, getAdsByPageIdPaged } from "./searchapi-client";
 import type { CollectDebugInfo } from "./searchapi-client";
+import type { NormalizedAd } from "@/types/searchapi";
 import { eq, and } from "drizzle-orm";
 
 interface CollectResult {
@@ -11,6 +12,7 @@ interface CollectResult {
   methods: string[];
   pages: string[];
   debug?: CollectDebugInfo;
+  nextPageToken?: string; // For client-driven pagination
 }
 
 export async function collectByKeyword(
@@ -138,87 +140,115 @@ export async function collectByKeyword(
   return { total, new: newCount, updated: updatedCount, methods, pages, debug };
 }
 
-// Collect ads directly by Facebook page ID (skip keyword search step)
-export async function collectByPageId(
-  pageId: string,
-  pageName: string,
-  country: string = "KR"
-): Promise<CollectResult> {
+// Helper: upsert ads into DB, returns counts
+async function upsertAds(
+  ads: NormalizedAd[],
+  advertiserId: number,
+): Promise<{ total: number; newCount: number; updatedCount: number }> {
   let total = 0;
   let newCount = 0;
   let updatedCount = 0;
 
-  try {
-    const ads = await getAdsByPageId(pageId, { country });
-
-    // Upsert advertiser
-    const existing = await db
+  for (const ad of ads) {
+    total++;
+    const existingAd = await db
       .select()
-      .from(advertisers)
-      .where(eq(advertisers.pageId, pageId))
+      .from(adCreatives)
+      .where(
+        and(
+          eq(adCreatives.source, "meta"),
+          eq(adCreatives.externalId, ad.externalId)
+        )
+      )
       .limit(1);
 
-    let advertiserId: number;
-    if (existing.length === 0) {
-      const inserted = await db
-        .insert(advertisers)
-        .values({ name: pageName, pageId, country })
-        .returning({ id: advertisers.id });
-      advertiserId = inserted[0].id;
+    if (existingAd.length === 0) {
+      await db.insert(adCreatives).values({
+        advertiserId,
+        source: "meta",
+        externalId: ad.externalId,
+        textBody: ad.textBody,
+        textTitle: ad.textTitle,
+        textDescription: ad.textDescription,
+        snapshotUrl: ad.snapshotUrl,
+        mediaType: ad.mediaType,
+        mediaUrls: JSON.stringify(ad.mediaUrls),
+        thumbnailUrl: ad.thumbnailUrl || ad.mediaUrls[0] || null,
+        platform: ad.platform,
+        country: ad.country,
+        firstSeen: ad.firstSeen,
+        lastSeen: new Date().toISOString().split("T")[0],
+        isActive: ad.isActive ? 1 : 0,
+      });
+      newCount++;
     } else {
-      advertiserId = existing[0].id;
       await db
-        .update(advertisers)
-        .set({ updatedAt: new Date() })
-        .where(eq(advertisers.id, advertiserId));
-    }
-
-    for (const ad of ads) {
-      total++;
-      const existingAd = await db
-        .select()
-        .from(adCreatives)
-        .where(
-          and(
-            eq(adCreatives.source, "meta"),
-            eq(adCreatives.externalId, ad.externalId)
-          )
-        )
-        .limit(1);
-
-      if (existingAd.length === 0) {
-        await db.insert(adCreatives).values({
-          advertiserId,
-          source: "meta",
-          externalId: ad.externalId,
-          textBody: ad.textBody,
-          textTitle: ad.textTitle,
-          textDescription: ad.textDescription,
-          snapshotUrl: ad.snapshotUrl,
-          mediaType: ad.mediaType,
-          mediaUrls: JSON.stringify(ad.mediaUrls),
-          thumbnailUrl: ad.thumbnailUrl || ad.mediaUrls[0] || null,
-          platform: ad.platform,
-          country: ad.country,
-          firstSeen: ad.firstSeen,
+        .update(adCreatives)
+        .set({
           lastSeen: new Date().toISOString().split("T")[0],
           isActive: ad.isActive ? 1 : 0,
-        });
-        newCount++;
-      } else {
-        await db
-          .update(adCreatives)
-          .set({
-            lastSeen: new Date().toISOString().split("T")[0],
-            isActive: ad.isActive ? 1 : 0,
-            mediaUrls: JSON.stringify(ad.mediaUrls),
-            thumbnailUrl: ad.thumbnailUrl || ad.mediaUrls[0] || null,
-            textTitle: ad.textTitle,
-          })
-          .where(eq(adCreatives.id, existingAd[0].id));
-        updatedCount++;
-      }
+          mediaUrls: JSON.stringify(ad.mediaUrls),
+          thumbnailUrl: ad.thumbnailUrl || ad.mediaUrls[0] || null,
+          textTitle: ad.textTitle,
+        })
+        .where(eq(adCreatives.id, existingAd[0].id));
+      updatedCount++;
     }
+  }
+
+  return { total, newCount, updatedCount };
+}
+
+// Upsert advertiser, returns advertiserId
+async function upsertAdvertiser(
+  pageId: string,
+  pageName: string,
+  country: string,
+): Promise<number> {
+  const existing = await db
+    .select()
+    .from(advertisers)
+    .where(eq(advertisers.pageId, pageId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const inserted = await db
+      .insert(advertisers)
+      .values({ name: pageName, pageId, country })
+      .returning({ id: advertisers.id });
+    return inserted[0].id;
+  }
+
+  await db
+    .update(advertisers)
+    .set({ updatedAt: new Date() })
+    .where(eq(advertisers.id, existing[0].id));
+  return existing[0].id;
+}
+
+// Collect ONE page of ads by Facebook page ID.
+// Pass nextPageToken from a previous call to get the next page.
+// Returns nextPageToken for the client to call again.
+export async function collectByPageId(
+  pageId: string,
+  pageName: string,
+  country: string = "KR",
+  nextPageToken?: string,
+): Promise<CollectResult> {
+  let total = 0;
+  let newCount = 0;
+  let updatedCount = 0;
+  let returnToken: string | undefined;
+
+  try {
+    const result = await getAdsByPageIdPaged(pageId, { country, nextPageToken });
+    returnToken = result.nextPageToken;
+
+    const advertiserId = await upsertAdvertiser(pageId, pageName, country);
+    const counts = await upsertAds(result.ads, advertiserId);
+    total = counts.total;
+    newCount = counts.newCount;
+    updatedCount = counts.updatedCount;
 
     await db.insert(collectionLogs).values({
       source: "meta",
@@ -240,7 +270,14 @@ export async function collectByPageId(
     throw error;
   }
 
-  return { total, new: newCount, updated: updatedCount, methods: ["direct_page"], pages: [pageName] };
+  return {
+    total,
+    new: newCount,
+    updated: updatedCount,
+    methods: ["direct_page"],
+    pages: [pageName],
+    nextPageToken: returnToken,
+  };
 }
 
 export async function collectMultiple(

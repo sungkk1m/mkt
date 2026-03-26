@@ -98,13 +98,28 @@ function getImageUrl(img: Record<string, unknown>): string | undefined {
   );
 }
 
+// Safely extract string value — if it's an object, stringify it
+function safeString(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "object") {
+    // Could be { text: "..." } or similar nested structure
+    const obj = val as Record<string, unknown>;
+    if (obj.text && typeof obj.text === "string") return obj.text;
+    if (obj.content && typeof obj.content === "string") return obj.content;
+    if (obj.markup && typeof obj.markup === "string") return obj.markup;
+    return JSON.stringify(val);
+  }
+  return String(val);
+}
+
 function normalizeAd(ad: SearchApiAd, country: string): NormalizedAd {
   const snapshot = ad.snapshot;
-  const body = snapshot?.body_text || snapshot?.body || ad.body || "";
-  const description = snapshot?.description || ad.description || "";
+  const body = safeString(snapshot?.body_text || snapshot?.body || ad.body || "");
+  const description = safeString(snapshot?.description || ad.description || "");
 
   // Extract title, filtering out template variables like {{product.name}}
-  let title = snapshot?.title || ad.title || "";
+  let title = safeString(snapshot?.title || ad.title || "");
   if (isTemplateVariable(title)) {
     const cardTitle = snapshot?.cards?.find(
       (card) => card.title && !isTemplateVariable(card.title)
@@ -196,44 +211,68 @@ export async function searchPages(
   return data.page_results || data.results || [];
 }
 
+export interface PagedAdResult {
+  ads: NormalizedAd[];
+  nextPageToken?: string;
+}
+
+// Fetch ONE page of ads for a given page_id.
+// Pass nextPageToken from a previous call to get the next page.
+export async function getAdsByPageIdPaged(
+  pageId: string,
+  options?: { mediaType?: string; country?: string; nextPageToken?: string }
+): Promise<PagedAdResult> {
+  const apiKey = getApiKey();
+  const country = options?.country || "KR";
+
+  const params: Record<string, string> = {
+    engine: "meta_ad_library",
+    page_id: pageId,
+    country,
+    ad_type: "all",
+    api_key: apiKey,
+  };
+
+  if (options?.mediaType && options.mediaType !== "all") {
+    params.media_type = options.mediaType;
+  }
+
+  if (options?.nextPageToken) {
+    params.next_page_token = options.nextPageToken;
+  }
+
+  const data = await requestWithRetry<SearchApiAdSearchResponse>(
+    BASE_URL,
+    params
+  );
+  const ads = data.ad_results || data.ads || data.results || [];
+  const normalized = ads.map((ad) => normalizeAd(ad, country));
+
+  const nextToken =
+    data.next_page_token ||
+    data.serpapi_pagination?.next_page_token ||
+    undefined;
+
+  return { ads: normalized, nextPageToken: nextToken };
+}
+
+// Legacy: fetch all pages at once (limited by MAX_PAGINATION for keyword search within timeout)
 export async function getAdsByPageId(
   pageId: string,
   options?: { mediaType?: string; country?: string }
 ): Promise<NormalizedAd[]> {
-  const apiKey = getApiKey();
-  const country = options?.country || "KR";
   const allAds: NormalizedAd[] = [];
   let nextPageToken: string | undefined;
 
   for (let page = 0; page < MAX_PAGINATION; page++) {
-    const params: Record<string, string> = {
-      engine: "meta_ad_library",
-      page_id: pageId,
-      country,
-      ad_type: "all",
-      api_key: apiKey,
-    };
-
-    if (options?.mediaType && options.mediaType !== "all") {
-      params.media_type = options.mediaType;
-    }
-
-    if (nextPageToken) {
-      params.next_page_token = nextPageToken;
-    }
-
-    const data = await requestWithRetry<SearchApiAdSearchResponse>(
-      BASE_URL,
-      params
-    );
-    const ads = data.ad_results || data.ads || data.results || [];
-    const normalized = ads.map((ad) => normalizeAd(ad, country));
-    allAds.push(...normalized);
-
-    nextPageToken =
-      data.next_page_token ||
-      data.serpapi_pagination?.next_page_token;
+    const result = await getAdsByPageIdPaged(pageId, {
+      ...options,
+      nextPageToken,
+    });
+    allAds.push(...result.ads);
+    nextPageToken = result.nextPageToken;
     if (!nextPageToken) break;
+    if (page < MAX_PAGINATION - 1) await delay(INTER_CALL_DELAY);
   }
 
   return allAds;
