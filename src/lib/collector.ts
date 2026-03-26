@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { advertisers, adCreatives, collectionLogs } from "./db/schema";
-import { searchAndCollect } from "./searchapi-client";
+import { searchAndCollect, getAdsByPageId } from "./searchapi-client";
 import type { CollectDebugInfo } from "./searchapi-client";
 import { eq, and } from "drizzle-orm";
 
@@ -136,6 +136,111 @@ export async function collectByKeyword(
   }
 
   return { total, new: newCount, updated: updatedCount, methods, pages, debug };
+}
+
+// Collect ads directly by Facebook page ID (skip keyword search step)
+export async function collectByPageId(
+  pageId: string,
+  pageName: string,
+  country: string = "KR"
+): Promise<CollectResult> {
+  let total = 0;
+  let newCount = 0;
+  let updatedCount = 0;
+
+  try {
+    const ads = await getAdsByPageId(pageId, { country });
+
+    // Upsert advertiser
+    const existing = await db
+      .select()
+      .from(advertisers)
+      .where(eq(advertisers.pageId, pageId))
+      .limit(1);
+
+    let advertiserId: number;
+    if (existing.length === 0) {
+      const inserted = await db
+        .insert(advertisers)
+        .values({ name: pageName, pageId, country })
+        .returning({ id: advertisers.id });
+      advertiserId = inserted[0].id;
+    } else {
+      advertiserId = existing[0].id;
+      await db
+        .update(advertisers)
+        .set({ updatedAt: new Date() })
+        .where(eq(advertisers.id, advertiserId));
+    }
+
+    for (const ad of ads) {
+      total++;
+      const existingAd = await db
+        .select()
+        .from(adCreatives)
+        .where(
+          and(
+            eq(adCreatives.source, "meta"),
+            eq(adCreatives.externalId, ad.externalId)
+          )
+        )
+        .limit(1);
+
+      if (existingAd.length === 0) {
+        await db.insert(adCreatives).values({
+          advertiserId,
+          source: "meta",
+          externalId: ad.externalId,
+          textBody: ad.textBody,
+          textTitle: ad.textTitle,
+          textDescription: ad.textDescription,
+          snapshotUrl: ad.snapshotUrl,
+          mediaType: ad.mediaType,
+          mediaUrls: JSON.stringify(ad.mediaUrls),
+          thumbnailUrl: ad.thumbnailUrl || ad.mediaUrls[0] || null,
+          platform: ad.platform,
+          country: ad.country,
+          firstSeen: ad.firstSeen,
+          lastSeen: new Date().toISOString().split("T")[0],
+          isActive: ad.isActive ? 1 : 0,
+        });
+        newCount++;
+      } else {
+        await db
+          .update(adCreatives)
+          .set({
+            lastSeen: new Date().toISOString().split("T")[0],
+            isActive: ad.isActive ? 1 : 0,
+            mediaUrls: JSON.stringify(ad.mediaUrls),
+            thumbnailUrl: ad.thumbnailUrl || ad.mediaUrls[0] || null,
+            textTitle: ad.textTitle,
+          })
+          .where(eq(adCreatives.id, existingAd[0].id));
+        updatedCount++;
+      }
+    }
+
+    await db.insert(collectionLogs).values({
+      source: "meta",
+      searchTerm: `page:${pageId} (${pageName})`,
+      adsFound: total,
+      adsNew: newCount,
+      status: total > 0 ? "success" : "no_results",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    await db.insert(collectionLogs).values({
+      source: "meta",
+      searchTerm: `page:${pageId}`,
+      adsFound: 0,
+      adsNew: 0,
+      status: "error",
+      errorMessage: message,
+    });
+    throw error;
+  }
+
+  return { total, new: newCount, updated: updatedCount, methods: ["direct_page"], pages: [pageName] };
 }
 
 export async function collectMultiple(

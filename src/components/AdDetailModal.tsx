@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import type { Ad } from "./AdCard";
 
 interface AdDetailModalProps {
@@ -9,6 +9,9 @@ interface AdDetailModalProps {
 }
 
 export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
+  const [downloading, setDownloading] = useState(false);
+  const [carouselIdx, setCarouselIdx] = useState(0);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -29,6 +32,7 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
     ? JSON.parse(ad.mediaUrls)
     : [];
   const isVideo = ad.mediaType === "video";
+  const isCarousel = ad.mediaType === "carousel";
   const text = [ad.textTitle, ad.textBody, ad.textDescription]
     .filter(Boolean)
     .join("\n\n");
@@ -38,7 +42,6 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
       await navigator.clipboard.writeText(text);
       alert("텍스트가 복사되었습니다!");
     } catch {
-      // Fallback
       const ta = document.createElement("textarea");
       ta.value = text;
       document.body.appendChild(ta);
@@ -46,6 +49,35 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
       document.execCommand("copy");
       document.body.removeChild(ta);
       alert("텍스트가 복사되었습니다!");
+    }
+  };
+
+  const downloadSingle = async (url: string, index?: number) => {
+    const proxyUrl = `/api/download?url=${encodeURIComponent(url)}`;
+    const a = document.createElement("a");
+    a.href = proxyUrl;
+    const ext = isVideo ? "mp4" : "jpg";
+    const name = ad.advertiserName || "ad";
+    const suffix = index !== undefined ? `_${index + 1}` : "";
+    a.download = `${name}_${ad.id}${suffix}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const downloadAll = async () => {
+    if (mediaUrls.length === 0) return;
+    setDownloading(true);
+    try {
+      for (let i = 0; i < mediaUrls.length; i++) {
+        await downloadSingle(mediaUrls[i], i);
+        // Small delay between downloads to prevent browser blocking
+        if (i < mediaUrls.length - 1) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -77,6 +109,35 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
                 className="w-full rounded-lg bg-black"
                 poster={ad.thumbnailUrl || undefined}
               />
+            ) : isCarousel && mediaUrls.length > 0 ? (
+              /* Carousel viewer with navigation */
+              <div className="relative">
+                <img
+                  src={mediaUrls[carouselIdx]}
+                  alt={`carousel ${carouselIdx + 1}`}
+                  className="w-full rounded-lg object-contain bg-black"
+                />
+                {/* Navigation arrows */}
+                {mediaUrls.length > 1 && (
+                  <>
+                    <button
+                      onClick={() => setCarouselIdx((prev) => (prev - 1 + mediaUrls.length) % mediaUrls.length)}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg"
+                    >
+                      &#8249;
+                    </button>
+                    <button
+                      onClick={() => setCarouselIdx((prev) => (prev + 1) % mediaUrls.length)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg"
+                    >
+                      &#8250;
+                    </button>
+                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-1 rounded-full">
+                      {carouselIdx + 1} / {mediaUrls.length}
+                    </div>
+                  </>
+                )}
+              </div>
             ) : ad.thumbnailUrl || mediaUrls[0] ? (
               <img
                 src={mediaUrls[0] || ad.thumbnailUrl || ""}
@@ -89,16 +150,23 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
               </div>
             )}
 
-            {/* Additional images for carousel */}
-            {ad.mediaType === "carousel" && mediaUrls.length > 1 && (
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                {mediaUrls.slice(1, 4).map((url, i) => (
-                  <img
+            {/* Carousel thumbnail strip */}
+            {isCarousel && mediaUrls.length > 1 && (
+              <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+                {mediaUrls.map((url, i) => (
+                  <button
                     key={i}
-                    src={url}
-                    alt={`carousel ${i + 1}`}
-                    className="w-full aspect-square object-cover rounded-lg"
-                  />
+                    onClick={() => setCarouselIdx(i)}
+                    className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-colors ${
+                      i === carouselIdx ? "border-blue-500" : "border-transparent"
+                    }`}
+                  >
+                    <img
+                      src={url}
+                      alt={`thumb ${i + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                  </button>
                 ))}
               </div>
             )}
@@ -167,8 +235,30 @@ export default function AdDetailModal({ ad, onClose }: AdDetailModalProps) {
               </div>
             </div>
 
-            {/* Buttons */}
-            <div className="flex gap-3 pt-2">
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-2 pt-2">
+              {/* Download single / all */}
+              {mediaUrls.length > 0 && (
+                <>
+                  {mediaUrls.length === 1 ? (
+                    <button
+                      onClick={() => downloadSingle(mediaUrls[0])}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors"
+                    >
+                      다운로드
+                    </button>
+                  ) : (
+                    <button
+                      onClick={downloadAll}
+                      disabled={downloading}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
+                    >
+                      {downloading ? "다운로드 중..." : `전체 다운로드 (${mediaUrls.length})`}
+                    </button>
+                  )}
+                </>
+              )}
+
               {ad.snapshotUrl && (
                 <a
                   href={ad.snapshotUrl}

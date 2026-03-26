@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collectByKeyword } from "@/lib/collector";
+import { collectByKeyword, collectByPageId } from "@/lib/collector";
 import { db } from "@/lib/db";
 import { adCreatives, advertisers } from "@/lib/db/schema";
 import { like, sql } from "drizzle-orm";
@@ -58,13 +58,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { keyword, country = "KR", cleanSeed = false } = body;
+    const { keyword, pageId, pageName, country = "KR", cleanSeed = false } = body;
 
     let seedCleaned = 0;
     if (cleanSeed) {
       seedCleaned = await cleanSeedData();
     }
 
+    // Mode 1: Direct page ID collection (skip keyword search)
+    if (pageId && typeof pageId === "string") {
+      const name = pageName || pageId;
+      const result = await collectByPageId(pageId, name, country);
+      return NextResponse.json({ seedCleaned, pageId, ...result });
+    }
+
+    // Mode 2: Keyword-based collection
     if (!keyword || typeof keyword !== "string") {
       if (cleanSeed) {
         return NextResponse.json({
@@ -73,7 +81,7 @@ export async function POST(request: NextRequest) {
         });
       }
       return NextResponse.json(
-        { error: "keyword (문자열) 가 필요합니다" },
+        { error: "keyword 또는 pageId가 필요합니다" },
         { status: 400 }
       );
     }

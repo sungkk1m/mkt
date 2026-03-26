@@ -42,6 +42,9 @@ function Dashboard() {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDownloading, setBulkDownloading] = useState(false);
 
   const filters: Filters = {
     search: searchParams.get("search") || "",
@@ -112,18 +115,81 @@ function Dashboard() {
     filters.sort,
   ]);
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === ads.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(ads.map((a) => a.id)));
+    }
+  };
+
+  const handleBulkDownload = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkDownloading(true);
+    try {
+      const res = await fetch("/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adIds: Array.from(selectedIds) }),
+      });
+      const { data } = await res.json();
+      if (!data) return;
+
+      for (const item of data) {
+        for (let i = 0; i < item.mediaUrls.length; i++) {
+          const url = item.mediaUrls[i];
+          const proxyUrl = `/api/download?url=${encodeURIComponent(url)}`;
+          const a = document.createElement("a");
+          a.href = proxyUrl;
+          const ext = item.mediaType === "video" ? "mp4" : "jpg";
+          a.download = `${item.advertiserName}_${item.adId}_${i + 1}.${ext}`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+    } finally {
+      setBulkDownloading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen">
       {/* Header */}
       <header className="border-b border-[#2a2a2a] px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold">🎮 게임 광고 라이브러리</h1>
-          <Link
-            href="/collect"
-            className="text-sm text-[#888] hover:text-white transition-colors"
-          >
-            수집 관리 →
-          </Link>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => {
+                setSelectMode(!selectMode);
+                setSelectedIds(new Set());
+              }}
+              className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${
+                selectMode
+                  ? "bg-blue-600 text-white"
+                  : "text-[#888] hover:text-white bg-[#1a1a1a]"
+              }`}
+            >
+              {selectMode ? "선택 취소" : "선택 모드"}
+            </button>
+            <Link
+              href="/collect"
+              className="text-sm text-[#888] hover:text-white transition-colors"
+            >
+              수집 관리 →
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -137,6 +203,28 @@ function Dashboard() {
           onFilterChange={(newFilters) => updateUrl(newFilters, 1)}
           advertisers={advertisers}
         />
+
+        {/* Bulk action bar */}
+        {selectMode && selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 mb-4 p-3 bg-blue-900/30 border border-blue-700/50 rounded-lg">
+            <button
+              onClick={selectAll}
+              className="text-sm text-blue-400 hover:text-blue-300"
+            >
+              {selectedIds.size === ads.length ? "전체 해제" : "전체 선택"}
+            </button>
+            <span className="text-sm text-[#888]">
+              {selectedIds.size}개 선택됨
+            </span>
+            <button
+              onClick={handleBulkDownload}
+              disabled={bulkDownloading}
+              className="ml-auto px-4 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
+            >
+              {bulkDownloading ? "다운로드 중..." : `선택 다운로드 (${selectedIds.size})`}
+            </button>
+          </div>
+        )}
 
         {/* Ad Grid */}
         {loading ? (
@@ -155,11 +243,32 @@ function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {ads.map((ad) => (
-              <AdCard
-                key={ad.id}
-                ad={ad}
-                onClick={() => setSelectedAd(ad)}
-              />
+              <div key={ad.id} className="relative">
+                {selectMode && (
+                  <button
+                    onClick={() => toggleSelect(ad.id)}
+                    className={`absolute top-3 left-3 z-10 w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
+                      selectedIds.has(ad.id)
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "border-[#555] bg-black/50 hover:border-blue-500"
+                    }`}
+                  >
+                    {selectedIds.has(ad.id) && (
+                      <span className="text-xs">&#10003;</span>
+                    )}
+                  </button>
+                )}
+                <AdCard
+                  ad={ad}
+                  onClick={() => {
+                    if (selectMode) {
+                      toggleSelect(ad.id);
+                    } else {
+                      setSelectedAd(ad);
+                    }
+                  }}
+                />
+              </div>
             ))}
           </div>
         )}
