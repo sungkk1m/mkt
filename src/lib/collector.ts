@@ -13,6 +13,7 @@ interface CollectResult {
   pages: string[];
   debug?: CollectDebugInfo;
   nextPageToken?: string; // For client-driven pagination
+  mediaTypeCounts?: Record<string, number>; // image/video/carousel counts
 }
 
 export async function collectByKeyword(
@@ -144,13 +145,16 @@ export async function collectByKeyword(
 async function upsertAds(
   ads: NormalizedAd[],
   advertiserId: number,
-): Promise<{ total: number; newCount: number; updatedCount: number }> {
+): Promise<{ total: number; newCount: number; updatedCount: number; mediaTypeCounts: Record<string, number> }> {
   let total = 0;
   let newCount = 0;
   let updatedCount = 0;
+  const mediaTypeCounts: Record<string, number> = {};
 
   for (const ad of ads) {
     total++;
+    const mt = ad.mediaType || "unknown";
+    mediaTypeCounts[mt] = (mediaTypeCounts[mt] || 0) + 1;
     const existingAd = await db
       .select()
       .from(adCreatives)
@@ -196,7 +200,7 @@ async function upsertAds(
     }
   }
 
-  return { total, newCount, updatedCount };
+  return { total, newCount, updatedCount, mediaTypeCounts };
 }
 
 // Upsert advertiser, returns advertiserId
@@ -239,6 +243,7 @@ export async function collectByPageId(
   let newCount = 0;
   let updatedCount = 0;
   let returnToken: string | undefined;
+  let mtCounts: Record<string, number> = {};
 
   try {
     const result = await getAdsByPageIdPaged(pageId, { country, nextPageToken });
@@ -249,6 +254,11 @@ export async function collectByPageId(
     total = counts.total;
     newCount = counts.newCount;
     updatedCount = counts.updatedCount;
+    mtCounts = counts.mediaTypeCounts;
+
+    const mtSummary = Object.entries(counts.mediaTypeCounts)
+      .map(([k, v]) => `${k}:${v}`)
+      .join(", ");
 
     await db.insert(collectionLogs).values({
       source: "meta",
@@ -256,6 +266,7 @@ export async function collectByPageId(
       adsFound: total,
       adsNew: newCount,
       status: total > 0 ? "success" : "no_results",
+      errorMessage: mtSummary ? `types: ${mtSummary}` : undefined,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -277,6 +288,7 @@ export async function collectByPageId(
     methods: ["direct_page"],
     pages: [pageName],
     nextPageToken: returnToken,
+    mediaTypeCounts: mtCounts,
   };
 }
 

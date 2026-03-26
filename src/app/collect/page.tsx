@@ -17,6 +17,7 @@ interface CollectResult {
     pageNames: string[];
     adsPerPage: Record<string, number>;
   };
+  mediaTypeCounts?: Record<string, number>;
 }
 
 interface LogEntry {
@@ -171,6 +172,7 @@ export default function CollectPage() {
         methods: data.methods || [],
         pages: data.pages || [],
         nextPageToken: data.nextPageToken,
+        mediaTypeCounts: data.mediaTypeCounts,
       };
     } catch {
       return { keyword: pageName || pageId, error: "네트워크 오류" };
@@ -485,6 +487,11 @@ export default function CollectPage() {
                   ) : (
                     <span className={r.total ? "text-green-400" : "text-yellow-400"}>
                       {r.keyword}: {r.total}개 수집 ({r.new}개 신규{r.updated ? `, ${r.updated}개 업데이트` : ""})
+                      {r.mediaTypeCounts && (
+                        <span className="text-[#888] ml-2">
+                          [{Object.entries(r.mediaTypeCounts).map(([k, v]) => `${k}:${v}`).join(", ")}]
+                        </span>
+                      )}
                       {r.debug && (
                         <span className="text-[#888] ml-2">
                           (페이지 {r.debug.pagesFound}개 발견

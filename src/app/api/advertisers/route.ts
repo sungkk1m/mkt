@@ -10,20 +10,21 @@ export async function GET(request: NextRequest) {
 
     const conditions = genre ? eq(advertisers.genre, genre) : undefined;
 
+    // Group by advertiser NAME to merge duplicates (same company, different pageIds)
     const data = await db
       .select({
-        id: advertisers.id,
+        id: sql<number>`MIN(${advertisers.id})`.as("id"),
         name: advertisers.name,
-        pageId: advertisers.pageId,
-        genre: advertisers.genre,
-        country: advertisers.country,
-        createdAt: advertisers.createdAt,
+        pageId: sql<string>`GROUP_CONCAT(DISTINCT ${advertisers.pageId})`.as("page_id"),
+        genre: sql<string>`MAX(${advertisers.genre})`.as("genre"),
+        country: sql<string>`MAX(${advertisers.country})`.as("country"),
+        createdAt: sql<number>`MIN(${advertisers.createdAt})`.as("created_at"),
         adCount: count(adCreatives.id),
       })
       .from(advertisers)
       .leftJoin(adCreatives, eq(advertisers.id, adCreatives.advertiserId))
       .where(conditions)
-      .groupBy(advertisers.id)
+      .groupBy(advertisers.name)
       .orderBy(advertisers.name);
 
     return NextResponse.json({ data });
