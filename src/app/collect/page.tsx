@@ -56,6 +56,14 @@ export default function CollectPage() {
   const [results, setResults] = useState<CollectResult[]>([]);
   const abortRef = useRef(false);
 
+  // Page name search state
+  const [pageSearchQuery, setPageSearchQuery] = useState("");
+  const [pageSearchResults, setPageSearchResults] = useState<
+    { pageId: string; pageName: string; category: string; likes: number; profilePicture: string }[]
+  >([]);
+  const [pageSearching, setPageSearching] = useState(false);
+  const [showIdGuide, setShowIdGuide] = useState(false);
+
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [advertisers, setAdvertisers] = useState<AdvertiserEntry[]>([]);
 
@@ -131,6 +139,35 @@ export default function CollectPage() {
     } catch {
       return { keyword, error: "네트워크 오류" };
     }
+  };
+
+  // Search for pages by name
+  const handlePageSearch = async () => {
+    if (!pageSearchQuery.trim()) return;
+    setPageSearching(true);
+    setPageSearchResults([]);
+    try {
+      const res = await fetch(
+        `/api/pages?q=${encodeURIComponent(pageSearchQuery.trim())}&country=${country}`,
+        { headers: { "x-api-key": apiKey } }
+      );
+      const data = await res.json();
+      if (data.results) {
+        setPageSearchResults(data.results);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setPageSearching(false);
+    }
+  };
+
+  // Select a page from search results → fill in the form
+  const selectPage = (pageId: string, pageName: string) => {
+    setPageInput(pageId);
+    setPageNameInput(pageName);
+    setPageSearchResults([]);
+    setPageSearchQuery("");
   };
 
   // Extract page ID from various Facebook URL formats
@@ -435,12 +472,72 @@ export default function CollectPage() {
             </>
           ) : (
             <>
+              {/* Page name search */}
+              <div className="mb-4">
+                <p className="text-xs text-[#888] mb-2">페이지 이름으로 검색 (페이지 ID를 모를 때)</p>
+                <div className="flex gap-2">
+                  <input
+                    value={pageSearchQuery}
+                    onChange={(e) => setPageSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handlePageSearch()}
+                    placeholder="페이지 이름 검색 (예: Supercell, 111%)"
+                    className="flex-1 bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                  <button
+                    onClick={handlePageSearch}
+                    disabled={pageSearching || !pageSearchQuery.trim()}
+                    className="px-4 py-2.5 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
+                  >
+                    {pageSearching ? "검색 중..." : "검색"}
+                  </button>
+                </div>
+
+                {/* Search results */}
+                {pageSearchResults.length > 0 && (
+                  <div className="mt-2 border border-[#2a2a2a] rounded-lg overflow-hidden">
+                    {pageSearchResults.map((p) => (
+                      <button
+                        key={p.pageId}
+                        onClick={() => selectPage(p.pageId, p.pageName)}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#2a2a2a] transition-colors text-left border-b border-[#1f1f1f] last:border-0"
+                      >
+                        {p.profilePicture ? (
+                          <img
+                            src={p.profilePicture}
+                            alt=""
+                            className="w-8 h-8 rounded-full bg-[#333] flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-[#333] flex-shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{p.pageName}</p>
+                          <p className="text-xs text-[#888]">
+                            {p.category && `${p.category} · `}
+                            {p.likes > 0 && `${p.likes.toLocaleString()} likes · `}
+                            ID: {p.pageId}
+                          </p>
+                        </div>
+                        <span className="text-xs text-blue-400 flex-shrink-0">선택</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 border-t border-[#2a2a2a]" />
+                <span className="text-xs text-[#666]">또는 직접 입력</span>
+                <div className="flex-1 border-t border-[#2a2a2a]" />
+              </div>
+
               {/* Page ID direct input */}
               <div className="space-y-3 mb-4">
                 <input
                   value={pageInput}
                   onChange={(e) => setPageInput(e.target.value)}
-                  placeholder="페이스북 페이지 ID 또는 URL (예: 123456789 또는 https://facebook.com/pages/GameName/123456789)"
+                  placeholder="페이스북 페이지 ID 또는 URL (예: 123456789)"
                   className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500"
                 />
                 <input
@@ -449,24 +546,55 @@ export default function CollectPage() {
                   placeholder="페이지 이름 (선택, 예: Supercell)"
                   className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500"
                 />
-                <select
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="KR">한국 (KR)</option>
-                  <option value="JP">일본 (JP)</option>
-                  <option value="US">미국 (US)</option>
-                </select>
+                <div className="flex items-center gap-4">
+                  <select
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="KR">한국 (KR)</option>
+                    <option value="JP">일본 (JP)</option>
+                    <option value="US">미국 (US)</option>
+                  </select>
+                  <button
+                    onClick={() => setShowIdGuide(!showIdGuide)}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    {showIdGuide ? "가이드 닫기" : "페이지 ID 찾는 방법?"}
+                  </button>
+                </div>
               </div>
 
-              <button
-                onClick={handleCollectByPage}
-                disabled={collecting || !pageInput.trim()}
-                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
-              >
-                {collecting ? "수집 중..." : "페이지 수집"}
-              </button>
+              {/* ID Guide */}
+              {showIdGuide && (
+                <div className="mb-4 p-4 bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg text-sm space-y-3">
+                  <p className="font-medium text-[#ccc]">페이스북 페이지 ID 찾는 방법</p>
+                  <div className="space-y-2 text-[#888]">
+                    <p><span className="text-white">1. Meta 광고 라이브러리</span>: facebook.com/ads/library 에서 페이지 이름 검색 → 페이지 클릭 → URL에서 ID 확인</p>
+                    <p><span className="text-white">2. 페이지 정보 탭</span>: 페이스북 페이지 → &quot;정보&quot; → &quot;페이지 투명성&quot; → 페이지 ID 확인</p>
+                    <p><span className="text-white">3. 페이지 소스</span>: 페이지 URL 끝에 숫자가 있으면 그것이 ID (예: facebook.com/profile.php?id=123456)</p>
+                    <p><span className="text-white">4. 외부 도구</span>: findmyfbid.in 또는 lookup-id.com 에서 페이지 URL 입력</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCollectByPage}
+                  disabled={collecting || !pageInput.trim()}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
+                >
+                  {collecting ? "수집 중..." : "페이지 수집"}
+                </button>
+                {collecting && (
+                  <button
+                    onClick={handleStop}
+                    className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+                  >
+                    중단
+                  </button>
+                )}
+              </div>
             </>
           )}
 
