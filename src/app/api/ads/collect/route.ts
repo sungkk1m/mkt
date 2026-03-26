@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { keyword, pageId, pageName, country = "KR", cleanSeed = false } = body;
+    const { keyword, pageId, pageName, country = "KR", cleanSeed = false, nextPageToken } = body;
 
     let seedCleaned = 0;
     if (cleanSeed) {
@@ -66,9 +66,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Mode 1: Direct page ID collection (skip keyword search)
+    // Supports client-driven pagination via nextPageToken
     if (pageId && typeof pageId === "string") {
       const name = pageName || pageId;
-      const result = await collectByPageId(pageId, name, country);
+      const result = await collectByPageId(pageId, name, country, nextPageToken);
       return NextResponse.json({ seedCleaned, pageId, ...result });
     }
 

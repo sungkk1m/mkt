@@ -144,10 +144,12 @@ export default function CollectPage() {
     return trimmed;
   };
 
+  // Fetch one page of ads, returns nextPageToken for continuation
   const collectSinglePage = async (
     pageId: string,
-    pageName: string
-  ): Promise<CollectResult> => {
+    pageName: string,
+    nextPageToken?: string,
+  ): Promise<CollectResult & { nextPageToken?: string }> => {
     try {
       const res = await fetch("/api/ads/collect", {
         method: "POST",
@@ -155,7 +157,7 @@ export default function CollectPage() {
           "Content-Type": "application/json",
           "x-api-key": apiKey,
         },
-        body: JSON.stringify({ pageId, pageName, country }),
+        body: JSON.stringify({ pageId, pageName, country, nextPageToken }),
       });
       const data = await res.json();
       if (data.error) {
@@ -168,6 +170,7 @@ export default function CollectPage() {
         updated: data.updated || 0,
         methods: data.methods || [],
         pages: data.pages || [],
+        nextPageToken: data.nextPageToken,
       };
     } catch {
       return { keyword: pageName || pageId, error: "네트워크 오류" };
@@ -183,15 +186,49 @@ export default function CollectPage() {
 
     setCollecting(true);
     setResults([]);
-    setProgress(`"${pageNameInput || pageId}" 페이지 광고 수집 중...`);
+    abortRef.current = false;
 
-    const result = await collectSinglePage(pageId, pageNameInput || pageId);
-    setResults([result]);
+    const name = pageNameInput || pageId;
+    let nextToken: string | undefined;
+    let pageNum = 0;
+    let grandTotal = 0;
+    let grandNew = 0;
+    let grandUpdated = 0;
 
-    const msg = result.error
-      ? `오류: ${result.error}`
-      : `완료! ${result.total}개 발견, ${result.new}개 신규`;
-    setProgress(msg);
+    // Client-driven pagination: keep calling until no more pages
+    do {
+      if (abortRef.current) {
+        setProgress(`중단됨 (${pageNum}페이지까지 수집)`);
+        break;
+      }
+
+      pageNum++;
+      setProgress(`"${name}" 페이지 ${pageNum}번째 배치 수집 중... (누적: ${grandTotal}개 발견, ${grandNew}개 신규)`);
+
+      const result = await collectSinglePage(pageId, name, nextToken);
+      setResults((prev) => [...prev, { ...result, keyword: `${name} (배치 ${pageNum})` }]);
+
+      if (result.error) {
+        setProgress(`오류: ${result.error} (${pageNum}페이지, 누적 ${grandTotal}개)`);
+        break;
+      }
+
+      grandTotal += result.total || 0;
+      grandNew += result.new || 0;
+      grandUpdated += result.updated || 0;
+      nextToken = result.nextPageToken;
+
+      // Small delay between pages
+      if (nextToken) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    } while (nextToken);
+
+    if (!abortRef.current) {
+      setProgress(
+        `완료! 총 ${grandTotal}개 수집 (${grandNew}개 신규, ${grandUpdated}개 업데이트, ${pageNum}배치)`
+      );
+    }
     setCollecting(false);
     loadData();
   };
@@ -447,7 +484,7 @@ export default function CollectPage() {
                     </span>
                   ) : (
                     <span className={r.total ? "text-green-400" : "text-yellow-400"}>
-                      {r.keyword}: {r.total}개 발견, {r.new}개 신규
+                      {r.keyword}: {r.total}개 수집 ({r.new}개 신규{r.updated ? `, ${r.updated}개 업데이트` : ""})
                       {r.debug && (
                         <span className="text-[#888] ml-2">
                           (페이지 {r.debug.pagesFound}개 발견
