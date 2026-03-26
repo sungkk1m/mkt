@@ -13,7 +13,12 @@ export async function POST(request: NextRequest) {
 
     const isValid = password === process.env.ADMIN_PASSWORD;
 
-    return NextResponse.json({ success: isValid });
+    if (isValid) {
+      // Return the collect API key so the authenticated client can use it
+      return NextResponse.json({ success: true, apiKey: process.env.COLLECT_API_KEY });
+    }
+
+    return NextResponse.json({ success: false });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: "서버 에러" },
