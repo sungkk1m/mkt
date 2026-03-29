@@ -127,8 +127,8 @@ export default function CollectPage() {
       const advData = await advRes.json();
       setLogs(statsData.recentLogs || []);
       setAdvertisers(advData.data || []);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to load data:", err);
     }
   };
 
@@ -151,6 +151,11 @@ export default function CollectPage() {
       });
       const data = await res.json();
 
+      if (!res.ok) {
+        const errMsg = data.error || `HTTP ${res.status}`;
+        return { keyword, error: errMsg };
+      }
+
       if (data.error) {
         return { keyword, error: data.error };
       }
@@ -164,8 +169,9 @@ export default function CollectPage() {
         pages: data.pages || [],
         debug: data.debug,
       };
-    } catch {
-      return { keyword, error: "네트워크 오류" };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "네트워크 오류";
+      return { keyword, error: `네트워크 오류: ${message}` };
     }
   };
 
@@ -226,6 +232,10 @@ export default function CollectPage() {
         body: JSON.stringify({ pageId, pageName, country, nextPageToken }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        const errMsg = data.error || `HTTP ${res.status}`;
+        return { keyword: pageName || pageId, error: errMsg };
+      }
       if (data.error) {
         return { keyword: pageName || pageId, error: data.error };
       }
@@ -239,8 +249,9 @@ export default function CollectPage() {
         nextPageToken: data.nextPageToken,
         mediaTypeCounts: data.mediaTypeCounts,
       };
-    } catch {
-      return { keyword: pageName || pageId, error: "네트워크 오류" };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "네트워크 오류";
+      return { keyword: pageName || pageId, error: `네트워크 오류: ${message}` };
     }
   };
 
@@ -683,12 +694,24 @@ export default function CollectPage() {
                   {logs.map((log) => (
                     <tr
                       key={log.id}
-                      className="border-b border-[#1f1f1f]"
+                      className="border-b border-[#1f1f1f] group"
                     >
                       <td className="py-2 pr-4 text-[#888]">
                         {new Date(log.createdAt).toLocaleString("ko-KR")}
                       </td>
-                      <td className="py-2 pr-4">{log.searchTerm}</td>
+                      <td className="py-2 pr-4">
+                        <div>{log.searchTerm}</div>
+                        {log.errorMessage && log.status === "error" && (
+                          <div className="text-xs text-red-400/80 mt-0.5 max-w-xs truncate" title={log.errorMessage}>
+                            {log.errorMessage}
+                          </div>
+                        )}
+                        {log.errorMessage && log.status !== "error" && (
+                          <div className="text-xs text-[#666] mt-0.5 max-w-xs truncate" title={log.errorMessage}>
+                            {log.errorMessage}
+                          </div>
+                        )}
+                      </td>
                       <td className="py-2 pr-4 text-right">{log.adsFound}</td>
                       <td className="py-2 pr-4 text-right">{log.adsNew}</td>
                       <td className="py-2">

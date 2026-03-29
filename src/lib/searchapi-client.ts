@@ -16,7 +16,11 @@ const INTER_CALL_DELAY = 1000;
 function getApiKey(): string {
   const key = process.env.SEARCHAPI_KEY;
   if (!key || key === "여기에_키_입력") {
-    throw new Error("SEARCHAPI_KEY 환경변수를 설정해주세요");
+    throw new Error(
+      "SEARCHAPI_KEY 환경변수가 설정되지 않았습니다. " +
+      "Vercel Dashboard → Settings → Environment Variables에서 SEARCHAPI_KEY를 설정하세요. " +
+      "키는 https://www.searchapi.io/dashboard 에서 발급받을 수 있습니다."
+    );
   }
   return key;
 }
@@ -41,16 +45,27 @@ async function requestWithRetry<T>(
     return response.data;
   } catch (error) {
     if (error instanceof AxiosError) {
-      if (error.response?.status === 401) {
-        throw new Error("API 키가 올바르지 않습니다");
+      const status = error.response?.status;
+      const responseData = error.response?.data as Record<string, unknown> | undefined;
+      const apiError = responseData?.error || responseData?.message || "";
+
+      if (status === 401) {
+        throw new Error("SearchAPI 키가 올바르지 않습니다 (401 Unauthorized). Vercel 환경변수 SEARCHAPI_KEY를 확인하세요.");
       }
-      if (error.response?.status === 429 && retries < MAX_RETRIES) {
+      if (status === 402) {
+        throw new Error("SearchAPI 크레딧이 소진되었습니다 (402 Payment Required). searchapi.io 대시보드에서 잔액을 확인하세요.");
+      }
+      if (status === 429 && retries < MAX_RETRIES) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY));
         return requestWithRetry<T>(url, params, retries + 1);
       }
-      if (!error.response) {
-        throw new Error("SearchAPI.io에 연결할 수 없습니다");
+      if (status === 429) {
+        throw new Error("SearchAPI 요청 한도 초과 (429 Too Many Requests). 잠시 후 다시 시도하세요.");
       }
+      if (!error.response) {
+        throw new Error(`SearchAPI.io에 연결할 수 없습니다 (${error.code || "NETWORK_ERROR"})`);
+      }
+      throw new Error(`SearchAPI 오류 (HTTP ${status}): ${apiError || error.message}`);
     }
     throw error;
   }
