@@ -328,3 +328,148 @@ export async function collectMultiple(
 
   return results;
 }
+
+// ── Google Ads Transparency Center Collection ──
+// Uses SerpAPI (serpapi.com) — separate provider from SearchAPI.io (Meta)
+
+import { getGoogleAdsPaged } from "./serpapi-client";
+
+// Source-aware upsert for Google ads
+async function upsertGoogleAds(
+  ads: NormalizedAd[],
+  advertiserId: number,
+): Promise<{ total: number; newCount: number; updatedCount: number; mediaTypeCounts: Record<string, number> }> {
+  let total = 0;
+  let newCount = 0;
+  let updatedCount = 0;
+  const mediaTypeCounts: Record<string, number> = {};
+
+  for (const ad of ads) {
+    total++;
+    const mt = ad.mediaType || "unknown";
+    mediaTypeCounts[mt] = (mediaTypeCounts[mt] || 0) + 1;
+
+    const existingAd = await db
+      .select()
+      .from(adCreatives)
+      .where(
+        and(
+          eq(adCreatives.source, "google"),
+          eq(adCreatives.externalId, ad.externalId)
+        )
+      )
+      .limit(1);
+
+    if (existingAd.length === 0) {
+      await db.insert(adCreatives).values({
+        advertiserId,
+        source: "google",
+        externalId: ad.externalId,
+        textBody: ad.textBody,
+        textTitle: ad.textTitle,
+        textDescription: ad.textDescription,
+        snapshotUrl: ad.snapshotUrl,
+        mediaType: ad.mediaType,
+        mediaUrls: JSON.stringify(ad.mediaUrls),
+        thumbnailUrl: ad.thumbnailUrl || null,
+        platform: ad.platform,
+        country: ad.country,
+        firstSeen: ad.firstSeen,
+        lastSeen: new Date().toISOString().split("T")[0],
+        isActive: ad.isActive ? 1 : 0,
+      });
+      newCount++;
+    } else {
+      await db
+        .update(adCreatives)
+        .set({
+          lastSeen: new Date().toISOString().split("T")[0],
+          isActive: ad.isActive ? 1 : 0,
+          mediaUrls: JSON.stringify(ad.mediaUrls),
+          thumbnailUrl: ad.thumbnailUrl || null,
+          textTitle: ad.textTitle,
+          textBody: ad.textBody,
+          textDescription: ad.textDescription,
+          mediaType: ad.mediaType,
+          snapshotUrl: ad.snapshotUrl,
+          advertiserId,
+        })
+        .where(eq(adCreatives.id, existingAd[0].id));
+      updatedCount++;
+    }
+  }
+
+  return { total, newCount, updatedCount, mediaTypeCounts };
+}
+
+/**
+ * Collect ONE page of Google Ads by advertiser ID or domain.
+ * Supports client-driven pagination via nextPageToken.
+ */
+export async function collectByGoogleAdvertiser(
+  identifier: string,
+  identifierType: "advertiser_id" | "domain" = "advertiser_id",
+  region: string = "anywhere",
+  nextPageToken?: string,
+): Promise<CollectResult> {
+  let total = 0;
+  let newCount = 0;
+  let updatedCount = 0;
+  let returnToken: string | undefined;
+  let mtCounts: Record<string, number> = {};
+
+  try {
+    const result = await getGoogleAdsPaged(identifier, {
+      identifierType,
+      region,
+      nextPageToken,
+    });
+    returnToken = result.nextPageToken;
+
+    // Use advertiser name from API response, fall back to identifier
+    const advName = result.advertiserName || identifier;
+
+    // Upsert advertiser — use identifier as pageId for Google
+    const advertiserId = await upsertAdvertiser(identifier, advName, region);
+
+    const counts = await upsertGoogleAds(result.ads, advertiserId);
+    total = counts.total;
+    newCount = counts.newCount;
+    updatedCount = counts.updatedCount;
+    mtCounts = counts.mediaTypeCounts;
+
+    const mtSummary = Object.entries(counts.mediaTypeCounts)
+      .map(([k, v]) => `${k}:${v}`)
+      .join(", ");
+
+    await db.insert(collectionLogs).values({
+      source: "google",
+      searchTerm: `google:${identifierType === "domain" ? "domain" : "advertiser"}:${identifier} (${advName})`,
+      adsFound: total,
+      adsNew: newCount,
+      status: total > 0 ? "success" : "no_results",
+      errorMessage: mtSummary ? `types: ${mtSummary}` : undefined,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    await db.insert(collectionLogs).values({
+      source: "google",
+      searchTerm: `google:${identifier}`,
+      adsFound: 0,
+      adsNew: 0,
+      status: "error",
+      errorMessage: message,
+    });
+    throw error;
+  }
+
+  return {
+    total,
+    new: newCount,
+    updated: updatedCount,
+    methods: ["google_ads_transparency"],
+    pages: [identifier],
+    nextPageToken: returnToken,
+    mediaTypeCounts: mtCounts,
+  };
+}

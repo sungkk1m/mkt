@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collectByKeyword, collectByPageId } from "@/lib/collector";
+import { collectByKeyword, collectByPageId, collectByGoogleAdvertiser } from "@/lib/collector";
 import { db } from "@/lib/db";
 import { adCreatives, advertisers } from "@/lib/db/schema";
 import { like, sql } from "drizzle-orm";
@@ -58,11 +58,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { keyword, pageId, pageName, country = "KR", cleanSeed = false, nextPageToken } = body;
+    const { keyword, pageId, pageName, country = "KR", cleanSeed = false, nextPageToken,
+            googleAdvertiserId, googleDomain, googleRegion } = body;
 
     let seedCleaned = 0;
     if (cleanSeed) {
       seedCleaned = await cleanSeedData();
+    }
+
+    // Mode 0: Google Ads Transparency Center collection (SerpAPI)
+    if (googleAdvertiserId || googleDomain) {
+      const identifier = googleAdvertiserId || googleDomain;
+      const idType = googleAdvertiserId ? "advertiser_id" as const : "domain" as const;
+      const region = googleRegion || "anywhere";
+      const result = await collectByGoogleAdvertiser(identifier, idType, region, nextPageToken);
+      return NextResponse.json({ source: "google", ...result });
     }
 
     // Mode 1: Direct page ID collection (skip keyword search)

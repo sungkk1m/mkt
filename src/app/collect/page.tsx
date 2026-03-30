@@ -48,6 +48,14 @@ export default function CollectPage() {
   const [pageInput, setPageInput] = useState("");
   const [pageNameInput, setPageNameInput] = useState("");
   const [country, setCountry] = useState("KR");
+
+  // Google Ads state
+  const [googleInput, setGoogleInput] = useState("");
+  const [googleInputType, setGoogleInputType] = useState<"advertiser_id" | "domain">("advertiser_id");
+  const [googleRegion, setGoogleRegion] = useState("anywhere");
+  const [googleCollecting, setGoogleCollecting] = useState(false);
+  const [googleProgress, setGoogleProgress] = useState("");
+  const [googleResults, setGoogleResults] = useState<CollectResult[]>([]);
   const [collecting, setCollecting] = useState(false);
   const [progress, setProgress] = useState("");
   const [results, setResults] = useState<CollectResult[]>([]);
@@ -273,6 +281,92 @@ export default function CollectPage() {
     abortRef.current = true;
   };
 
+  // ── Google Ads Collection ──
+  const handleGoogleCollect = async () => {
+    const input = googleInput.trim();
+    if (!input) {
+      alert("광고주 ID 또는 도메인을 입력해주세요");
+      return;
+    }
+
+    setGoogleCollecting(true);
+    setGoogleResults([]);
+    abortRef.current = false;
+
+    let nextToken: string | undefined;
+    let pageNum = 0;
+    let grandTotal = 0;
+    let grandNew = 0;
+
+    do {
+      if (abortRef.current) {
+        setGoogleProgress(`중단됨 (${pageNum}페이지까지 수집)`);
+        break;
+      }
+
+      pageNum++;
+      setGoogleProgress(`Google Ads "${input}" ${pageNum}번째 배치 수집 중... (누적: ${grandTotal}개 발견, ${grandNew}개 신규)`);
+
+      try {
+        const body: Record<string, string | undefined> = {
+          country,
+          nextPageToken: nextToken,
+          googleRegion: googleRegion,
+        };
+        if (googleInputType === "domain") {
+          body.googleDomain = input;
+        } else {
+          body.googleAdvertiserId = input;
+        }
+
+        const res = await fetch("/api/ads/collect", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+          },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+          const errMsg = data.error || `HTTP ${res.status}`;
+          setGoogleResults((prev) => [...prev, { keyword: `${input} (배치 ${pageNum})`, error: errMsg }]);
+          setGoogleProgress(`오류: ${errMsg}`);
+          break;
+        }
+
+        const result: CollectResult = {
+          keyword: `${input} (배치 ${pageNum})`,
+          total: data.total || 0,
+          new: data.new || 0,
+          updated: data.updated || 0,
+          mediaTypeCounts: data.mediaTypeCounts,
+        };
+        setGoogleResults((prev) => [...prev, result]);
+
+        grandTotal += result.total || 0;
+        grandNew += result.new || 0;
+        nextToken = data.nextPageToken;
+
+        if (nextToken) {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "네트워크 오류";
+        setGoogleResults((prev) => [...prev, { keyword: `${input} (배치 ${pageNum})`, error: message }]);
+        setGoogleProgress(`오류: ${message}`);
+        break;
+      }
+    } while (nextToken);
+
+    if (!abortRef.current) {
+      setGoogleProgress(`완료! 총 ${grandTotal}개 수집 (${grandNew}개 신규, ${pageNum}배치)`);
+    }
+    setGoogleCollecting(false);
+    loadData();
+  };
+
   // Login screen
   if (!authenticated) {
     return (
@@ -481,6 +575,116 @@ export default function CollectPage() {
                         <span className="text-[#888] ml-2">
                           (페이지 {r.debug.pagesFound}개 발견
                           {r.debug.pageNames.length > 0 && `: ${r.debug.pageNames[0]}`})
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Google Ads Collection Panel */}
+        <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-6">
+          <h2 className="text-lg font-semibold mb-4">
+            <span className="text-green-400">G</span> Google Ads 수집
+          </h2>
+          <p className="text-xs text-[#888] mb-4">Google Ads Transparency Center에서 광고를 수집합니다 (SerpAPI)</p>
+
+          {/* Input type toggle */}
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => setGoogleInputType("advertiser_id")}
+              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                googleInputType === "advertiser_id"
+                  ? "bg-green-600 text-white"
+                  : "bg-[#2a2a2a] text-[#888] hover:text-white"
+              }`}
+            >
+              광고주 ID
+            </button>
+            <button
+              onClick={() => setGoogleInputType("domain")}
+              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                googleInputType === "domain"
+                  ? "bg-green-600 text-white"
+                  : "bg-[#2a2a2a] text-[#888] hover:text-white"
+              }`}
+            >
+              도메인
+            </button>
+          </div>
+
+          {/* Input */}
+          <div className="space-y-3 mb-4">
+            <input
+              value={googleInput}
+              onChange={(e) => setGoogleInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !googleCollecting && handleGoogleCollect()}
+              placeholder={
+                googleInputType === "advertiser_id"
+                  ? "Google 광고주 ID (예: AR01234567890123456789)"
+                  : "도메인 (예: supercell.com)"
+              }
+              className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-green-500"
+            />
+
+            {/* Region selector */}
+            <div className="flex items-center gap-4">
+              <select
+                value={googleRegion}
+                onChange={(e) => setGoogleRegion(e.target.value)}
+                className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="anywhere">전체 지역</option>
+                <option value="KR">한국</option>
+                <option value="JP">일본</option>
+                <option value="US">미국</option>
+              </select>
+              <span className="text-xs text-[#666]">
+                Google Ads Transparency Center 기준
+              </span>
+            </div>
+          </div>
+
+          {/* Collect / Stop */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleGoogleCollect}
+              disabled={googleCollecting || collecting || !googleInput.trim()}
+              className="px-6 py-2.5 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
+            >
+              {googleCollecting ? "수집 중..." : "Google Ads 수집"}
+            </button>
+            {googleCollecting && (
+              <button
+                onClick={handleStop}
+                className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              >
+                중단
+              </button>
+            )}
+          </div>
+
+          {/* Progress */}
+          {googleProgress && (
+            <p className="mt-4 text-sm text-[#ccc]">{googleProgress}</p>
+          )}
+
+          {/* Results */}
+          {googleResults.length > 0 && (
+            <div className="mt-4 space-y-1">
+              {googleResults.map((r, i) => (
+                <div key={i} className="text-sm">
+                  {r.error ? (
+                    <span className="text-red-400">{r.keyword}: {r.error}</span>
+                  ) : (
+                    <span className={r.total ? "text-green-400" : "text-yellow-400"}>
+                      {r.keyword}: {r.total}개 수집 ({r.new}개 신규{r.updated ? `, ${r.updated}개 업데이트` : ""})
+                      {r.mediaTypeCounts && (
+                        <span className="text-[#888] ml-2">
+                          [{Object.entries(r.mediaTypeCounts).map(([k, v]) => `${k}:${v}`).join(", ")}]
                         </span>
                       )}
                     </span>
