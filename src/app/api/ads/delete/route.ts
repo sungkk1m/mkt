@@ -48,26 +48,25 @@ export async function POST(request: NextRequest) {
       );
     const adsToDelete = countResult[0].count;
 
-    if (adsToDelete === 0) {
-      return NextResponse.json({
-        deleted: 0,
-        message: `"${advertiserName}" 광고주에 삭제할 광고가 없습니다`,
-      });
+    // Delete ads if any exist
+    if (adsToDelete > 0) {
+      if (advIds.length === 1) {
+        await db.delete(adCreatives).where(eq(adCreatives.advertiserId, advIds[0]));
+      } else {
+        await db.delete(adCreatives).where(
+          sql`${adCreatives.advertiserId} IN (${sql.raw(advIds.join(","))})`
+        );
+      }
     }
 
-    // Delete ads
+    // Delete the advertiser records themselves
     if (advIds.length === 1) {
-      await db.delete(adCreatives).where(eq(adCreatives.advertiserId, advIds[0]));
+      await db.delete(advertisers).where(eq(advertisers.id, advIds[0]));
     } else {
-      await db.delete(adCreatives).where(
-        sql`${adCreatives.advertiserId} IN (${sql.raw(advIds.join(","))})`
+      await db.delete(advertisers).where(
+        sql`${advertisers.id} IN (${sql.raw(advIds.join(","))})`
       );
     }
-
-    // Delete orphan advertisers (those with 0 ads remaining)
-    await db.delete(advertisers).where(
-      sql`${advertisers.id} IN (${sql.raw(advIds.join(","))}) AND ${advertisers.id} NOT IN (SELECT DISTINCT ${adCreatives.advertiserId} FROM ${adCreatives} WHERE ${adCreatives.advertiserId} IS NOT NULL)`
-    );
 
     // Log deletion
     await db.insert(collectionLogs).values({
@@ -76,13 +75,17 @@ export async function POST(request: NextRequest) {
       adsFound: adsToDelete,
       adsNew: 0,
       status: "success",
-      errorMessage: `bulk_delete: ${adsToDelete}개 광고 삭제`,
+      errorMessage: adsToDelete > 0
+        ? `bulk_delete: ${adsToDelete}개 광고 삭제`
+        : `advertiser_delete: 광고 0개, 광고주 삭제`,
     });
 
     return NextResponse.json({
       deleted: adsToDelete,
       advertisersRemoved: advIds.length,
-      message: `"${advertiserName}" 광고 ${adsToDelete}개 삭제 완료`,
+      message: adsToDelete > 0
+        ? `"${advertiserName}" 광고 ${adsToDelete}개 삭제 완료`
+        : `"${advertiserName}" 광고주 삭제 완료 (광고 0개)`,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "삭제 중 에러 발생";
