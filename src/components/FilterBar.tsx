@@ -78,7 +78,8 @@ export default function FilterBar({
         <select
           value={filters.advertiser}
           onChange={(e) => update("advertiser", e.target.value)}
-          className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+          className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 max-w-[280px] md:max-w-[320px] truncate"
+          title={filters.advertiser || "전체 광고주"}
         >
           <option value="">전체 광고주</option>
           {advertisers.map((adv) => (

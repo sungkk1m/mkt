@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { DEFAULT_SEARCH_TERMS, DEFAULT_GAME_TERMS } from "@/lib/constants";
 
 interface CollectResult {
   keyword: string;
@@ -46,8 +45,6 @@ export default function CollectPage() {
   const [authError, setAuthError] = useState("");
   const [apiKey, setApiKey] = useState("");
 
-  const [collectMode, setCollectMode] = useState<"keyword" | "page">("keyword");
-  const [keywords, setKeywords] = useState("");
   const [pageInput, setPageInput] = useState("");
   const [pageNameInput, setPageNameInput] = useState("");
   const [country, setCountry] = useState("KR");
@@ -135,45 +132,6 @@ export default function CollectPage() {
   useEffect(() => {
     if (authenticated) loadData();
   }, [authenticated]);
-
-  const collectSingleKeyword = async (
-    keyword: string,
-    cleanSeed: boolean = false
-  ): Promise<CollectResult> => {
-    try {
-      const res = await fetch("/api/ads/collect", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify({ keyword, country, cleanSeed }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        const errMsg = data.error || `HTTP ${res.status}`;
-        return { keyword, error: errMsg };
-      }
-
-      if (data.error) {
-        return { keyword, error: data.error };
-      }
-
-      return {
-        keyword,
-        total: data.total || 0,
-        new: data.new || 0,
-        updated: data.updated || 0,
-        methods: data.methods || [],
-        pages: data.pages || [],
-        debug: data.debug,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "네트워크 오류";
-      return { keyword, error: `네트워크 오류: ${message}` };
-    }
-  };
 
   // Search for pages by name
   const handlePageSearch = async () => {
@@ -311,51 +269,6 @@ export default function CollectPage() {
     loadData();
   };
 
-  const handleCollect = async () => {
-    const terms = keywords
-      .split(/[,\n]/)
-      .map((t) => t.trim())
-      .filter(Boolean);
-
-    if (terms.length === 0) {
-      alert("검색어를 입력해주세요");
-      return;
-    }
-
-    setCollecting(true);
-    setResults([]);
-    abortRef.current = false;
-
-    let totalFound = 0;
-    let totalNew = 0;
-
-    for (let i = 0; i < terms.length; i++) {
-      if (abortRef.current) {
-        setProgress(`중단됨 (${i}/${terms.length})`);
-        break;
-      }
-
-      const keyword = terms[i];
-      setProgress(`[${i + 1}/${terms.length}] "${keyword}" 수집 중...`);
-
-      // Clean seed data on first keyword only
-      const result = await collectSingleKeyword(keyword, i === 0);
-
-      setResults((prev) => [...prev, result]);
-
-      if (!result.error) {
-        totalFound += result.total || 0;
-        totalNew += result.new || 0;
-      }
-    }
-
-    setProgress(
-      `완료! 총 ${totalFound}개 발견, ${totalNew}개 신규 (${terms.length}개 키워드)`
-    );
-    setCollecting(false);
-    loadData();
-  };
-
   const handleStop = () => {
     abortRef.current = true;
   };
@@ -396,11 +309,6 @@ export default function CollectPage() {
     );
   }
 
-  const keywordCount = keywords
-    .split(/[,\n]/)
-    .map((t) => t.trim())
-    .filter(Boolean).length;
-
   return (
     <div className="min-h-screen">
       {/* Header */}
@@ -419,97 +327,8 @@ export default function CollectPage() {
       <main className="max-w-5xl mx-auto px-6 py-6 space-y-6">
         {/* Collection Panel */}
         <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-6">
-          <h2 className="text-lg font-semibold mb-4">수집 실행</h2>
+          <h2 className="text-lg font-semibold mb-4">페이스북 페이지 직접 수집</h2>
 
-          {/* Mode Tabs */}
-          <div className="flex gap-1 mb-4 bg-[#0f0f0f] rounded-lg p-1 w-fit">
-            <button
-              onClick={() => setCollectMode("keyword")}
-              className={`px-4 py-2 rounded-md text-sm transition-colors ${
-                collectMode === "keyword"
-                  ? "bg-blue-600 text-white"
-                  : "text-[#888] hover:text-white"
-              }`}
-            >
-              키워드 검색
-            </button>
-            <button
-              onClick={() => setCollectMode("page")}
-              className={`px-4 py-2 rounded-md text-sm transition-colors ${
-                collectMode === "page"
-                  ? "bg-blue-600 text-white"
-                  : "text-[#888] hover:text-white"
-              }`}
-            >
-              페이지 직접 수집
-            </button>
-          </div>
-
-          {collectMode === "keyword" ? (
-            <>
-              {/* Quick buttons */}
-              <div className="flex gap-2 mb-4">
-                <button
-                  onClick={() => setKeywords(DEFAULT_SEARCH_TERMS.join(", "))}
-                  className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-[#333] rounded-lg text-sm transition-colors"
-                >
-                  기본 검색어
-                </button>
-                <button
-                  onClick={() => setKeywords(DEFAULT_GAME_TERMS.join(", "))}
-                  className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-[#333] rounded-lg text-sm transition-colors"
-                >
-                  인기 게임
-                </button>
-              </div>
-
-              {/* Input */}
-              <textarea
-                value={keywords}
-                onChange={(e) => setKeywords(e.target.value)}
-                placeholder="검색어를 입력하세요 (쉼표 또는 줄바꿈으로 구분)"
-                rows={3}
-                className="w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-4 py-3 mb-3 text-sm focus:outline-none focus:border-blue-500 resize-none"
-              />
-
-              {/* Country + info */}
-              <div className="flex items-center gap-4 mb-4">
-                <select
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="KR">한국 (KR)</option>
-                  <option value="JP">일본 (JP)</option>
-                  <option value="US">미국 (US)</option>
-                </select>
-                {keywordCount > 0 && (
-                  <span className="text-sm text-[#888]">
-                    검색어 {keywordCount}개 (1개씩 순차 수집)
-                  </span>
-                )}
-              </div>
-
-              {/* Collect / Stop buttons */}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCollect}
-                  disabled={collecting}
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
-                >
-                  {collecting ? "수집 중..." : "수집 시작"}
-                </button>
-                {collecting && (
-                  <button
-                    onClick={handleStop}
-                    className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
-                  >
-                    중단
-                  </button>
-                )}
-              </div>
-            </>
-          ) : (
             <>
               {/* Page name search */}
               <div className="mb-4">
@@ -635,7 +454,6 @@ export default function CollectPage() {
                 )}
               </div>
             </>
-          )}
 
           {/* Progress */}
           {progress && (
@@ -745,21 +563,21 @@ export default function CollectPage() {
               {advertisers.map((adv) => (
                 <div
                   key={adv.id}
-                  className="flex items-center justify-between bg-[#0f0f0f] rounded-lg px-4 py-3"
+                  className="flex items-center justify-between gap-3 bg-[#0f0f0f] rounded-lg px-4 py-3"
                 >
-                  <div>
-                    <p className="font-medium">{adv.name}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate" title={adv.name}>{adv.name}</p>
                     {adv.genre && (
                       <p className="text-xs text-[#888]">{adv.genre}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-[#888]">
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className="text-sm text-[#888] whitespace-nowrap">
                       {adv.adCount}개 광고
                     </span>
                     <button
                       onClick={() => setDeleteTarget(adv)}
-                      disabled={adv.adCount === 0 || collecting}
+                      disabled={collecting}
                       className="text-xs text-red-400 hover:text-red-300 disabled:text-[#555] disabled:cursor-not-allowed transition-colors"
                     >
                       삭제
@@ -783,12 +601,15 @@ export default function CollectPage() {
           <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-6 max-w-md w-full">
             <h3 className="text-lg font-semibold mb-3 text-red-400">광고 삭제 확인</h3>
             <p className="text-sm text-[#ccc] mb-2">
-              <span className="font-medium text-white">{deleteTarget.name}</span>의
-              광고 <span className="text-red-400 font-bold">{deleteTarget.adCount}개</span>를
-              모두 삭제하시겠습니까?
+              <span className="font-medium text-white">{deleteTarget.name}</span>
+              {deleteTarget.adCount > 0 ? (
+                <>의 광고 <span className="text-red-400 font-bold">{deleteTarget.adCount}개</span>를 모두 삭제하시겠습니까?</>
+              ) : (
+                <>을(를) 삭제하시겠습니까? 이 광고주는 0개의 광고를 보유하고 있습니다.</>
+              )}
             </p>
             <p className="text-xs text-[#888] mb-6">
-              이 작업은 되돌릴 수 없습니다. 해당 광고주와 모든 광고 데이터가 영구 삭제됩니다.
+              이 작업은 되돌릴 수 없습니다. 해당 광고주{deleteTarget.adCount > 0 ? "와 모든 광고 데이터" : ""}가 영구 삭제됩니다.
             </p>
             <div className="flex gap-3 justify-end">
               <button
@@ -803,7 +624,7 @@ export default function CollectPage() {
                 disabled={deleting}
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
               >
-                {deleting ? "삭제 중..." : `${deleteTarget.adCount}개 삭제`}
+                {deleting ? "삭제 중..." : deleteTarget.adCount > 0 ? `${deleteTarget.adCount}개 삭제` : "삭제"}
               </button>
             </div>
           </div>
